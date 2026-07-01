@@ -49,7 +49,13 @@
           <button type="button" id="apply-warning-days" {{ 'disabled' if read_only }}>Apply</button>
           <input type="hidden" name="warning_days" id="warning_days" value="{{ warning_days }}">
           {% if not read_only %}<button type="submit">Save</button>{% endif %}
-          <span class="save-status" id="save-status"></span>
+          {% if not read_only %}
+            <input type="text" name="new_filename" id="save-as-name" placeholder="Save as filename.docx" style="width:14em">
+            <button type="submit" data-save-as formaction="{{ url_for('save_as', filename=filename) }}">Save As</button>
+          {% endif %}
+          <span class="save-status{{ ' error' if save_as_error }}" id="save-status"
+                {% if saved_as %}data-saved-as="{{ saved_as }}"{% endif %}
+          >{% if saved_as %}Saved as {{ saved_as }}{% elif save_as_error == 'exists' %}A file with that name already exists{% elif save_as_error == 'empty' %}Enter a file name for Save As{% endif %}</span>
           <span class="legend">
             <span class="swatch state-EXPIRED"></span>Expired
             <span class="swatch state-WARNING"></span>Expiring soon

@@ -333,6 +333,8 @@ def open_file(filename):
         read_only=read_only,
         lock_holder_name=(holder or {}).get("name"),
         conflict=request.args.get("conflict") == "1",
+        saved_as=request.args.get("saved_as"),
+        save_as_error=request.args.get("save_as_error"),
     )
 
 
@@ -598,6 +600,37 @@ def save_file(filename):
     locks.release(lock_key, client_id)
 
     return redirect(url_for("open_file", filename=new_filename, warning_days=warning_days, saved=1))
+
+
+@app.route("/save_as/<path:filename>", methods=["POST"])
+def save_as(filename):
+    """Save the currently-edited (not-yet-saved) form content into a brand
+    new .docx file, leaving the original file on disk untouched."""
+    folder = get_current_folder()
+    lock_key = _key(folder, filename)
+    client_id = get_client_id()
+    warning_days = int(request.form.get("warning_days", DEFAULT_WARNING_DAYS))
+    if not locks.is_owner(lock_key, client_id):
+        return redirect(url_for("open_file", filename=filename, warning_days=warning_days, conflict=1))
+
+    new_name = os.path.basename((request.form.get("new_filename") or "").strip())
+    if not new_name:
+        return redirect(url_for("open_file", filename=filename, warning_days=warning_days, save_as_error="empty"))
+    if not new_name.lower().endswith(".docx"):
+        new_name += ".docx"
+
+    path = os.path.join(folder, filename)
+    new_path = os.path.join(folder, new_name)
+    if os.path.exists(new_path):
+        return redirect(url_for("open_file", filename=filename, warning_days=warning_days, save_as_error="exists"))
+
+    fresh_doc = docx.Document(path)
+    fresh_doc.save(new_path)
+    fresh_ext = parser.extract(fresh_doc)
+    if _apply_form_edits(fresh_ext, new_path, request.form, get_display_name()):
+        fresh_doc.save(new_path)
+
+    return redirect(url_for("open_file", filename=filename, warning_days=warning_days, saved_as=new_name))
 
 
 @app.route("/add_row/<path:filename>/<table_key>", methods=["POST"])

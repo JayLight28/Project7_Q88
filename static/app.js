@@ -130,6 +130,7 @@ function q88InitPage() {
     form.addEventListener("submit", function (e) {
       e.preventDefault();
       var submitter = e.submitter;
+      var isSaveAs = !!(submitter && submitter.hasAttribute("data-save-as"));
       var url = (submitter && submitter.getAttribute("formaction")) || form.action;
       var formData = new FormData(form);
       sessionStorage.setItem(scrollKey, window.scrollY);
@@ -146,11 +147,13 @@ function q88InitPage() {
           document.title = newDoc.title;
           dirty = false;
           q88InitPage();
-          var now = new Date();
-          var hh = String(now.getHours()).padStart(2, "0");
-          var mm = String(now.getMinutes()).padStart(2, "0");
-          var status = document.getElementById("save-status");
-          if (status) { status.textContent = "Saved at " + hh + ":" + mm; status.classList.remove("error"); }
+          if (!isSaveAs) {
+            var now = new Date();
+            var hh = String(now.getHours()).padStart(2, "0");
+            var mm = String(now.getMinutes()).padStart(2, "0");
+            var status = document.getElementById("save-status");
+            if (status) { status.textContent = "Saved at " + hh + ":" + mm; status.classList.remove("error"); }
+          }
         })
         .catch(function () {
           setSaveStatus("Save failed - retrying...", true);

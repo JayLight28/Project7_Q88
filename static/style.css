@@ -84,8 +84,9 @@ tr[data-section].section-hidden { display: none; }
   color: white;
   padding: 10px 18px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
+  gap: 10px 16px;
   z-index: 10;
 }
 
@@ -331,13 +332,14 @@ body.home { background: var(--bg-chrome); margin: 0; }
 
 .home-shell {
   display: flex;
+  flex-wrap: wrap;
   gap: 24px;
   align-items: flex-start;
   max-width: 1600px;
   width: 94%;
   margin: 24px auto;
 }
-.doc-pane { flex: 1 1 56%; min-width: 0; }
+.doc-pane { flex: 1 1 56%; min-width: 320px; }
 .settings-pane { flex: 1 1 44%; min-width: 340px; display: flex; flex-direction: column; gap: 14px; }
 .pane-title { font-size: 15px; color: var(--navy); margin: 4px 0 10px 2px; }
 
@@ -475,4 +477,18 @@ body.home { background: var(--bg-chrome); margin: 0; }
 .danger-btn {
   background: var(--danger); color: white; border: none; padding: 6px 14px;
   border-radius: 4px; cursor: pointer; margin-left: auto;
+}
+
+/* ---- narrow viewport: stack instead of truncate ---- */
+@media (max-width: 860px) {
+  .app-shell { flex-direction: column; }
+  .sidebar {
+    width: 100%;
+    flex: 0 0 auto;
+    height: auto;
+    max-height: 220px;
+    position: static;
+  }
+  .home-shell { width: auto; margin: 16px; }
+  .doc-pane, .settings-pane { flex: 1 1 100%; min-width: 0; }
 }

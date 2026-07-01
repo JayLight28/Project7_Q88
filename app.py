@@ -11,7 +11,7 @@ import webbrowser
 from tkinter import filedialog
 
 import docx
-from flask import Flask, render_template, request, redirect, url_for, jsonify, g
+from flask import Flask, render_template, request, redirect, url_for, jsonify, g, abort
 
 from q88 import parser, rules, state as statemod, style as stylemod, locks, config as configmod
 
@@ -36,8 +36,10 @@ app.config["MAX_FORM_PARTS"] = 10000
 # in-memory cache of the most recently opened document, keyed by "folder::filename"
 # (folder is per-browser now, so two people can look at different folders at once
 # without colliding even if a filename happens to repeat), so /save can locate the
-# exact python-docx Cell objects parsed by /open.
+# exact python-docx Cell objects parsed by /open. Guarded by _cache_mutex since
+# waitress serves requests from multiple worker threads.
 _OPEN_CACHE = {}
+_cache_mutex = threading.Lock()
 
 
 def _key(folder, filename):
@@ -80,6 +82,18 @@ def _ensure_client_cookie(response):
     return response
 
 
+def _safe_path(folder, filename):
+    """Join folder+filename and refuse to return anything outside folder -
+    filename comes straight from the URL (Flask's <path:...> converter
+    allows slashes and "..") so this is the one place that containment is
+    enforced for every route that opens/saves a vessel file."""
+    folder_real = os.path.realpath(folder)
+    candidate = os.path.realpath(os.path.join(folder, filename))
+    if os.path.commonpath([folder_real, candidate]) != folder_real:
+        abort(404)
+    return candidate
+
+
 def list_files(folder):
     files = []
     for name in sorted(os.listdir(folder)):
@@ -95,7 +109,7 @@ def list_files(folder):
 
 
 def open_document(filename, folder):
-    path = os.path.join(folder, filename)
+    path = _safe_path(folder, filename)
     doc = docx.Document(path)
     ext = parser.extract(doc)
     _OPEN_CACHE[_key(folder, filename)] = {"path": path, "doc": doc, "ext": ext}
@@ -268,7 +282,7 @@ def open_file(filename):
     read_only = not got_lock
 
     ext = open_document(filename, folder)
-    path = os.path.join(folder, filename)
+    path = _safe_path(folder, filename)
     st = statemod.load_state(path)
     warning_days = int(request.args.get("warning_days", DEFAULT_WARNING_DAYS))
     today = datetime.date.today()
@@ -385,7 +399,7 @@ def release_lock(filename):
 @app.route("/panel/<path:filename>")
 def file_panel(filename):
     folder = get_current_folder()
-    path = os.path.join(folder, filename)
+    path = _safe_path(folder, filename)
     issues = _compute_issues(path)
     st = statemod.load_state(path)
     raw = st.get("history", [])
@@ -403,7 +417,7 @@ def file_panel(filename):
 @app.route("/field_edit/<path:filename>/<field_id>", methods=["POST"])
 def field_edit(filename, field_id):
     folder = get_current_folder()
-    path = os.path.join(folder, filename)
+    path = _safe_path(folder, filename)
     cache = _get_or_load_cache(filename, folder)
     doc, ext = cache["doc"], cache["ext"]
 
@@ -450,7 +464,7 @@ def _wants_ajax():
 @app.route("/history/<path:filename>/revert/<int:index>", methods=["POST"])
 def revert_entry(filename, index):
     folder = get_current_folder()
-    path = os.path.join(folder, filename)
+    path = _safe_path(folder, filename)
     st = statemod.load_state(path)
     raw = st.get("history", [])
     if index < 0 or index >= len(raw):
@@ -486,7 +500,7 @@ def revert_entry(filename, index):
 @app.route("/restore_original/<path:filename>", methods=["POST"])
 def restore_original(filename):
     folder = get_current_folder()
-    path = os.path.join(folder, filename)
+    path = _safe_path(folder, filename)
     bpath = statemod.backup_path(path)
     if os.path.exists(bpath):
         shutil.copy2(bpath, path)
@@ -516,11 +530,12 @@ def _field_labels(ext):
 
 def _get_or_load_cache(filename, folder):
     key = _key(folder, filename)
-    cache = _OPEN_CACHE.get(key)
-    if not cache:
-        open_document(filename, folder)
-        cache = _OPEN_CACHE[key]
-    return cache
+    with _cache_mutex:
+        cache = _OPEN_CACHE.get(key)
+        if not cache:
+            open_document(filename, folder)
+            cache = _OPEN_CACHE[key]
+        return cache
 
 
 def _apply_form_edits(ext, path, form, by):
@@ -641,7 +656,7 @@ def save_as(filename):
     if not new_name.lower().endswith(".docx"):
         new_name += ".docx"
 
-    path = os.path.join(folder, filename)
+    path = _safe_path(folder, filename)
     new_path = os.path.join(folder, new_name)
     if os.path.exists(new_path):
         return redirect(url_for("open_file", filename=filename, warning_days=warning_days, save_as_error="exists"))

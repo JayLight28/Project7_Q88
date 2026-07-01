@@ -332,14 +332,13 @@ body.home { background: var(--bg-chrome); margin: 0; }
 
 .home-shell {
   display: flex;
-  flex-wrap: wrap;
   gap: 24px;
   align-items: flex-start;
   max-width: 1600px;
   width: 94%;
   margin: 24px auto;
 }
-.doc-pane { flex: 1 1 56%; min-width: 320px; }
+.doc-pane { flex: 1 1 56%; min-width: 0; }
 .settings-pane { flex: 1 1 44%; min-width: 340px; display: flex; flex-direction: column; gap: 14px; }
 .pane-title { font-size: 15px; color: var(--navy); margin: 4px 0 10px 2px; }
 
@@ -489,6 +488,6 @@ body.home { background: var(--bg-chrome); margin: 0; }
     max-height: 220px;
     position: static;
   }
-  .home-shell { width: auto; margin: 16px; }
+  .home-shell { width: auto; margin: 16px; flex-wrap: wrap; }
   .doc-pane, .settings-pane { flex: 1 1 100%; min-width: 0; }
 }

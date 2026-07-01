@@ -82,10 +82,11 @@ def list_files(folder):
         lower = name.lower()
         if lower.endswith(".original_backup.docx") or lower.endswith(".original_backup.doc"):
             continue
+        mtime = int(os.path.getmtime(os.path.join(folder, name)))
         if lower.endswith(".docx"):
-            files.append({"name": name, "supported": True})
+            files.append({"name": name, "supported": True, "mtime": mtime})
         elif lower.endswith(".doc"):
-            files.append({"name": name, "supported": False})
+            files.append({"name": name, "supported": False, "mtime": mtime})
     return files
 
 

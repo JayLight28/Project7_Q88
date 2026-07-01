@@ -17,9 +17,15 @@
       <div class="panel-header">
         <h2>Vessel files</h2>
       </div>
-      <ul class="file-list">
+      <input type="text" id="file-search" class="file-search" placeholder="Filter by filename...">
+      <div class="file-sort">
+        <button type="button" data-sort="name" class="active">Name</button>
+        <button type="button" data-sort="date">Date modified</button>
+      </div>
+      <ul class="file-list" id="file-list">
         {% for f in files %}
           <li class="{{ 'file-card' if f.supported else 'file-card disabled' }}"
+              data-mtime="{{ f.mtime }}"
               {% if f.supported %}data-filename="{{ f.name }}"{% endif %}>
             <div class="file-icon">{{ 'DOCX' if f.supported else 'DOC' }}</div>
             <div class="file-body">
@@ -98,16 +104,6 @@
       </section>
     </aside>
   </div>
-
-  {% if style_applied %}
-    <div id="toast" class="toast">
-      {% if style_count and style_count|int > 0 %}
-        Style synced: {{ style_count }} value cell(s) updated{% if style_files and style_files|int > 1 %} across {{ style_files }} file(s){% endif %}.
-      {% else %}
-        {{ style_applied }} already matched the reference style - nothing to change.
-      {% endif %}
-    </div>
-  {% endif %}
 
   <script src="{{ url_for('static', filename='home.js') }}"></script>
 </body>

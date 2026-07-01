@@ -26,28 +26,36 @@
     <div class="main-pane">
       {% if read_only %}
         <div class="lock-banner">
+          <span class="banner-icon">&#128274;</span>
           {{ lock_holder_name }} is currently editing this file, so it's open read-only. It will become editable automatically once they're done.
           <button type="button" id="refresh-lock-btn">Refresh</button>
         </div>
       {% endif %}
       {% if conflict %}
         <div class="lock-banner conflict">
+          <span class="banner-icon">&#9888;</span>
           Someone else opened this file while you were editing, so your save was rejected. Please refresh and try again.
         </div>
       {% endif %}
       <form method="post" action="{{ url_for('save_file', filename=filename) }}" id="q88-form">
         <div class="toolbar">
-          <a href="{{ url_for('index') }}">&larr; Files</a>
+          <a href="{{ url_for('index') }}">&#128193; Files</a>
           <span class="app-bar-version">v{{ app_version }}</span>
           <span class="filename">{{ filename }}</span>
-          <a href="{{ url_for('history', filename=filename) }}" class="history-link">History</a>
+          <a href="{{ url_for('history', filename=filename) }}" class="history-link">&#128337; History</a>
           <label>Warn within (days):
             <input type="number" name="warning_days_view" id="warning_days_view" value="{{ warning_days }}" min="0" style="width:4em" {{ 'disabled' if read_only }}>
           </label>
           <button type="button" id="apply-warning-days" {{ 'disabled' if read_only }}>Apply</button>
           <input type="hidden" name="warning_days" id="warning_days" value="{{ warning_days }}">
           {% if not read_only %}<button type="submit">Save</button>{% endif %}
-          {% if saved %}<span class="saved-msg">Saved</span>{% endif %}
+          {% if not read_only %}
+            <input type="text" name="new_filename" id="save-as-name" placeholder="Save as filename.docx" style="width:14em">
+            <button type="submit" data-save-as formaction="{{ url_for('save_as', filename=filename) }}">Save As</button>
+          {% endif %}
+          <span class="save-status{{ ' error' if save_as_error }}" id="save-status"
+                {% if saved_as %}data-saved-as="{{ saved_as }}"{% endif %}
+          >{% if saved_as %}Saved as {{ saved_as }}{% elif save_as_error == 'exists' %}A file with that name already exists{% elif save_as_error == 'empty' %}Enter a file name for Save As{% endif %}</span>
           <span class="legend">
             <span class="swatch state-EXPIRED"></span>Expired
             <span class="swatch state-WARNING"></span>Expiring soon

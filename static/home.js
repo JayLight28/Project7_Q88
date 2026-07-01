@@ -1,10 +1,4 @@
 document.addEventListener("DOMContentLoaded", function () {
-  // --- toast ---
-  var toast = document.getElementById("toast");
-  if (toast) {
-    requestAnimationFrame(function () { toast.classList.add("show"); });
-    setTimeout(function () { toast.classList.remove("show"); }, 4000);
-  }
   document.querySelectorAll(".notice").forEach(function (el) {
     el.scrollIntoView({ behavior: "smooth", block: "center" });
   });
@@ -68,6 +62,43 @@ document.addEventListener("DOMContentLoaded", function () {
     card.addEventListener("dblclick", function (e) {
       if (e.target.closest("a")) return;
       window.location.href = "/open/" + encodeURIComponent(card.getAttribute("data-filename"));
+    });
+  });
+
+  // --- search + sort ---
+  var searchInput = document.getElementById("file-search");
+  var fileList = document.getElementById("file-list");
+  var sortButtons = document.querySelectorAll(".file-sort button");
+
+  function applyFilter() {
+    var q = (searchInput.value || "").toLowerCase();
+    cards.forEach(function (card) {
+      var name = (card.getAttribute("data-filename") || card.textContent || "").toLowerCase();
+      card.style.display = name.indexOf(q) === -1 ? "none" : "";
+    });
+  }
+  if (searchInput) {
+    searchInput.addEventListener("input", applyFilter);
+  }
+
+  function applySort(key) {
+    if (!fileList) return;
+    var items = Array.prototype.slice.call(cards);
+    items.sort(function (a, b) {
+      if (key === "date") {
+        return (parseInt(b.getAttribute("data-mtime"), 10) || 0) - (parseInt(a.getAttribute("data-mtime"), 10) || 0);
+      }
+      var an = (a.getAttribute("data-filename") || "").toLowerCase();
+      var bn = (b.getAttribute("data-filename") || "").toLowerCase();
+      return an < bn ? -1 : an > bn ? 1 : 0;
+    });
+    items.forEach(function (item) { fileList.appendChild(item); });
+  }
+  sortButtons.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      sortButtons.forEach(function (b) { b.classList.remove("active"); });
+      btn.classList.add("active");
+      applySort(btn.getAttribute("data-sort"));
     });
   });
 

@@ -11,12 +11,12 @@ import webbrowser
 from tkinter import filedialog
 
 import docx
-from flask import Flask, render_template, request, redirect, url_for, jsonify, g
+from flask import Flask, render_template, request, redirect, url_for, jsonify, g, abort
 
 from q88 import parser, rules, state as statemod, style as stylemod, locks, config as configmod
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 DEFAULT_WARNING_DAYS = 60
 REFERENCE_HINT = "original form"
 PORT = 5000
@@ -28,12 +28,18 @@ FOLDER_COOKIE = "q88_folder"
 FILENAME_RE = re.compile(r"^(Q88 V6 )([^ ]+)( )(.+)(\.docx)$", re.IGNORECASE)
 
 app = Flask(__name__)
+# The Q88 questionnaire form has thousands of fields (one per cell), well past
+# Werkzeug's default max_form_parts=1000 - without this, /save 413s on any
+# full-size document.
+app.config["MAX_FORM_PARTS"] = 10000
 
 # in-memory cache of the most recently opened document, keyed by "folder::filename"
 # (folder is per-browser now, so two people can look at different folders at once
 # without colliding even if a filename happens to repeat), so /save can locate the
-# exact python-docx Cell objects parsed by /open.
+# exact python-docx Cell objects parsed by /open. Guarded by _cache_mutex since
+# waitress serves requests from multiple worker threads.
 _OPEN_CACHE = {}
+_cache_mutex = threading.Lock()
 
 
 def _key(folder, filename):
@@ -76,21 +82,34 @@ def _ensure_client_cookie(response):
     return response
 
 
+def _safe_path(folder, filename):
+    """Join folder+filename and refuse to return anything outside folder -
+    filename comes straight from the URL (Flask's <path:...> converter
+    allows slashes and "..") so this is the one place that containment is
+    enforced for every route that opens/saves a vessel file."""
+    folder_real = os.path.realpath(folder)
+    candidate = os.path.realpath(os.path.join(folder, filename))
+    if os.path.commonpath([folder_real, candidate]) != folder_real:
+        abort(404)
+    return candidate
+
+
 def list_files(folder):
     files = []
     for name in sorted(os.listdir(folder)):
         lower = name.lower()
         if lower.endswith(".original_backup.docx") or lower.endswith(".original_backup.doc"):
             continue
+        mtime = int(os.path.getmtime(os.path.join(folder, name)))
         if lower.endswith(".docx"):
-            files.append({"name": name, "supported": True})
+            files.append({"name": name, "supported": True, "mtime": mtime})
         elif lower.endswith(".doc"):
-            files.append({"name": name, "supported": False})
+            files.append({"name": name, "supported": False, "mtime": mtime})
     return files
 
 
 def open_document(filename, folder):
-    path = os.path.join(folder, filename)
+    path = _safe_path(folder, filename)
     doc = docx.Document(path)
     ext = parser.extract(doc)
     _OPEN_CACHE[_key(folder, filename)] = {"path": path, "doc": doc, "ext": ext}
@@ -106,32 +125,43 @@ def find_reference_file(files):
 
 def _compute_issues(path, warning_days=DEFAULT_WARNING_DAYS):
     """Every currently-flagged field in a document, newest/most-severe first.
-    Shared by the file-list issue count and the home-page detail panel."""
+    Shared by the file-list issue count and the home-page detail panel.
+
+    A multi-column table row (e.g. one row, five columns) collapses to at
+    most one issue - if every cell in the row is filled (or N/A-checked),
+    the row has no issue; otherwise one issue represents the whole row,
+    at its most severe cell's state."""
     ext = parser.extract(docx.Document(path))
     st = statemod.load_state(path)
     today = datetime.date.today()
+    state_order = {"EXPIRED": 0, "WARNING": 1, "MISSING": 2}
 
-    cells = []
+    def cell_state(fid, label, col):
+        cell = ext.cell_map.get(fid)
+        if cell is None or st["na_flags"].get(fid):
+            return None, ""
+        state, _ = rules.classify(label, col, cell.text.strip(), warning_days=warning_days, today=today)
+        return state, cell.text.strip()
+
+    issues = []
     for r in ext.display_rows:
         if r["type"] == "field":
-            cells.append((r["id"], r["label"], r["column_header"], r["item_code"]))
+            state, text = cell_state(r["id"], r["label"], r["column_header"])
+            if state in rules.HIGHLIGHTABLE:
+                full_label = f"{r['label']} ({r['column_header']})" if r["column_header"] else r["label"]
+                issues.append({"id": r["id"], "item_code": r["item_code"], "label": full_label, "text": text, "state": state})
         elif r["type"] == "table":
             for tr in r["rows"]:
                 item_code = tr.get("row_item_code") or r["item_code"]
+                row_flagged = []
                 for c in tr["cells"]:
-                    cells.append((c["id"], tr["row_label"], c["column_header"], item_code))
+                    state, _ = cell_state(c["id"], tr["row_label"], c["column_header"])
+                    if state in rules.HIGHLIGHTABLE:
+                        row_flagged.append((state, c["id"]))
+                if row_flagged:
+                    worst_state = min((s for s, _ in row_flagged), key=lambda s: state_order.get(s, 9))
+                    issues.append({"id": row_flagged[0][1], "item_code": item_code, "label": tr["row_label"], "text": "", "state": worst_state})
 
-    issues = []
-    for fid, label, col, item_code in cells:
-        cell = ext.cell_map.get(fid)
-        if cell is None:
-            continue
-        state, _ = rules.classify(label, col, cell.text.strip(), warning_days=warning_days, today=today)
-        if state in rules.HIGHLIGHTABLE and not st["na_flags"].get(fid):
-            full_label = f"{label} ({col})" if col else label
-            issues.append({"id": fid, "item_code": item_code, "label": full_label, "text": cell.text.strip(), "state": state})
-
-    state_order = {"EXPIRED": 0, "WARNING": 1, "MISSING": 2}
     issues.sort(key=lambda x: state_order.get(x["state"], 9))
     return issues
 
@@ -252,7 +282,7 @@ def open_file(filename):
     read_only = not got_lock
 
     ext = open_document(filename, folder)
-    path = os.path.join(folder, filename)
+    path = _safe_path(folder, filename)
     st = statemod.load_state(path)
     warning_days = int(request.args.get("warning_days", DEFAULT_WARNING_DAYS))
     today = datetime.date.today()
@@ -260,7 +290,9 @@ def open_file(filename):
     issues = []
     recently_changed = set(st.get("last_changed_ids", []))
 
-    def classify_cell(cell_rec, label, column_header, item_code):
+    state_order = {"EXPIRED": 0, "WARNING": 1, "MISSING": 2}
+
+    def classify_cell(cell_rec, label, column_header, item_code, collect=True):
         computed_state, _ = rules.classify(
             label, column_header, cell_rec["text"],
             warning_days=warning_days, today=today,
@@ -271,12 +303,13 @@ def open_file(filename):
         cell_rec["na_checked"] = na_checked
         cell_rec["show_na_checkbox"] = computed_state in rules.HIGHLIGHTABLE
         cell_rec["recently_changed"] = cell_rec["id"] in recently_changed
-        if display_state in rules.HIGHLIGHTABLE:
+        if collect and display_state in rules.HIGHLIGHTABLE:
             full_label = f"{label} ({column_header})" if column_header else label
             issues.append({
                 "id": cell_rec["id"], "item_code": item_code,
                 "label": full_label, "text": cell_rec["text"], "state": display_state,
             })
+        return display_state
 
     rows = []
     sections = []  # sidebar nav: [{id, text, kind: 'heading'|'subheading'}]
@@ -303,8 +336,17 @@ def open_file(filename):
                 trc = dict(tr)
                 trc["cells"] = [dict(c) for c in tr["cells"]]
                 item_code = tr.get("row_item_code") or r["item_code"]
+                row_flagged = []
                 for c in trc["cells"]:
-                    classify_cell(c, tr["row_label"], c["column_header"], item_code)
+                    cell_state = classify_cell(c, tr["row_label"], c["column_header"], item_code, collect=False)
+                    if cell_state in rules.HIGHLIGHTABLE:
+                        row_flagged.append((cell_state, c["id"]))
+                if row_flagged:
+                    worst_state = min((s for s, _ in row_flagged), key=lambda s: state_order.get(s, 9))
+                    issues.append({
+                        "id": row_flagged[0][1], "item_code": item_code,
+                        "label": tr["row_label"], "text": "", "state": worst_state,
+                    })
                 row["rows"].append(trc)
             rows.append(row)
         else:
@@ -314,7 +356,6 @@ def open_file(filename):
                 row["anchor_id"] = sections[-1]["id"]
             rows.append(row)
 
-    state_order = {"EXPIRED": 0, "WARNING": 1, "MISSING": 2}
     issues.sort(key=lambda x: state_order.get(x["state"], 9))
 
     return render_template(
@@ -328,6 +369,8 @@ def open_file(filename):
         read_only=read_only,
         lock_holder_name=(holder or {}).get("name"),
         conflict=request.args.get("conflict") == "1",
+        saved_as=request.args.get("saved_as"),
+        save_as_error=request.args.get("save_as_error"),
     )
 
 
@@ -356,7 +399,7 @@ def release_lock(filename):
 @app.route("/panel/<path:filename>")
 def file_panel(filename):
     folder = get_current_folder()
-    path = os.path.join(folder, filename)
+    path = _safe_path(folder, filename)
     issues = _compute_issues(path)
     st = statemod.load_state(path)
     raw = st.get("history", [])
@@ -374,7 +417,7 @@ def file_panel(filename):
 @app.route("/field_edit/<path:filename>/<field_id>", methods=["POST"])
 def field_edit(filename, field_id):
     folder = get_current_folder()
-    path = os.path.join(folder, filename)
+    path = _safe_path(folder, filename)
     cache = _get_or_load_cache(filename, folder)
     doc, ext = cache["doc"], cache["ext"]
 
@@ -421,7 +464,7 @@ def _wants_ajax():
 @app.route("/history/<path:filename>/revert/<int:index>", methods=["POST"])
 def revert_entry(filename, index):
     folder = get_current_folder()
-    path = os.path.join(folder, filename)
+    path = _safe_path(folder, filename)
     st = statemod.load_state(path)
     raw = st.get("history", [])
     if index < 0 or index >= len(raw):
@@ -457,7 +500,7 @@ def revert_entry(filename, index):
 @app.route("/restore_original/<path:filename>", methods=["POST"])
 def restore_original(filename):
     folder = get_current_folder()
-    path = os.path.join(folder, filename)
+    path = _safe_path(folder, filename)
     bpath = statemod.backup_path(path)
     if os.path.exists(bpath):
         shutil.copy2(bpath, path)
@@ -487,11 +530,12 @@ def _field_labels(ext):
 
 def _get_or_load_cache(filename, folder):
     key = _key(folder, filename)
-    cache = _OPEN_CACHE.get(key)
-    if not cache:
-        open_document(filename, folder)
-        cache = _OPEN_CACHE[key]
-    return cache
+    with _cache_mutex:
+        cache = _OPEN_CACHE.get(key)
+        if not cache:
+            open_document(filename, folder)
+            cache = _OPEN_CACHE[key]
+        return cache
 
 
 def _apply_form_edits(ext, path, form, by):
@@ -593,6 +637,37 @@ def save_file(filename):
     locks.release(lock_key, client_id)
 
     return redirect(url_for("open_file", filename=new_filename, warning_days=warning_days, saved=1))
+
+
+@app.route("/save_as/<path:filename>", methods=["POST"])
+def save_as(filename):
+    """Save the currently-edited (not-yet-saved) form content into a brand
+    new .docx file, leaving the original file on disk untouched."""
+    folder = get_current_folder()
+    lock_key = _key(folder, filename)
+    client_id = get_client_id()
+    warning_days = int(request.form.get("warning_days", DEFAULT_WARNING_DAYS))
+    if not locks.is_owner(lock_key, client_id):
+        return redirect(url_for("open_file", filename=filename, warning_days=warning_days, conflict=1))
+
+    new_name = os.path.basename((request.form.get("new_filename") or "").strip())
+    if not new_name:
+        return redirect(url_for("open_file", filename=filename, warning_days=warning_days, save_as_error="empty"))
+    if not new_name.lower().endswith(".docx"):
+        new_name += ".docx"
+
+    path = _safe_path(folder, filename)
+    new_path = os.path.join(folder, new_name)
+    if os.path.exists(new_path):
+        return redirect(url_for("open_file", filename=filename, warning_days=warning_days, save_as_error="exists"))
+
+    fresh_doc = docx.Document(path)
+    fresh_doc.save(new_path)
+    fresh_ext = parser.extract(fresh_doc)
+    if _apply_form_edits(fresh_ext, new_path, request.form, get_display_name()):
+        fresh_doc.save(new_path)
+
+    return redirect(url_for("open_file", filename=filename, warning_days=warning_days, saved_as=new_name))
 
 
 @app.route("/add_row/<path:filename>/<table_key>", methods=["POST"])

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ filename }} - Edit history</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="toolbar">
+    <a href="{{ url_for('open_file', filename=filename) }}">&larr; Back to document</a>
+    <span class="filename">{{ filename }} - Edit history</span>
+    <span class="app-bar-version">v{{ app_version }}</span>
+    {% if has_backup %}
+      <form method="post" action="{{ url_for('restore_original', filename=filename) }}"
+            onsubmit="return confirm('Restore the whole document to how it looked before any edits? This cannot be undone.');">
+        <button type="submit" class="danger-btn">Restore original document</button>
+      </form>
+    {% endif %}
+  </div>
+  {% if restored %}<div class="notice ok" style="margin:12px 24px;">Document restored to its original (pre-edit) state.</div>{% endif %}
+  {% if reverted %}<div class="notice ok" style="margin:12px 24px;">Field reverted.</div>{% endif %}
+  <div class="page" style="max-width:1100px;">
+    <section class="panel">
+      {% if not entries %}
+        <p class="panel-hint">No edits recorded for this file yet.</p>
+      {% else %}
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Who</th>
+              <th>Field</th>
+              <th>Old value</th>
+              <th>New value</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for e in entries %}
+              <tr class="{{ 'rename-row' if e.field_id in ('__rename__', '__restore__') else '' }}">
+                <td class="nowrap">{{ e.ts }}</td>
+                <td class="nowrap">{{ e.by }}</td>
+                <td>{{ e.label }}</td>
+                <td class="old-val">{{ e.old if e.old else '(empty)' }}</td>
+                <td class="new-val">{{ e.new if e.new else '(empty)' }}</td>
+                <td>
+                  {% if e.field_id not in ('__rename__', '__restore__') %}
+                    <form method="post" action="{{ url_for('revert_entry', filename=filename, index=e.index) }}"
+                          data-confirm-value="{{ e.old if e.old else '(empty)' }}" class="revert-form">
+                      <button type="submit" class="small-btn">Revert</button>
+                    </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
+    </section>
+  </div>
+  <script>
+    document.querySelectorAll(".revert-form").forEach(function (form) {
+      form.addEventListener("submit", function (e) {
+        var val = form.getAttribute("data-confirm-value");
+        if (!confirm("Set this field back to: " + val + "?")) e.preventDefault();
+      });
+    });
+  </script>
+</body>
+</html>

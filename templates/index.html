@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Q88 Check</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="home">
+  <header class="app-bar">
+    <span class="app-bar-title">Q88 Check</span>
+    <span class="app-bar-version">v{{ app_version }}</span>
+    <span class="app-bar-sub">{{ files|length }} file(s) in this folder</span>
+  </header>
+
+  <div class="home-shell">
+    <section class="doc-pane panel">
+      <div class="panel-header">
+        <h2>Vessel files</h2>
+      </div>
+      <ul class="file-list">
+        {% for f in files %}
+          <li class="{{ 'file-card' if f.supported else 'file-card disabled' }}"
+              {% if f.supported %}data-filename="{{ f.name }}"{% endif %}>
+            <div class="file-icon">{{ 'DOCX' if f.supported else 'DOC' }}</div>
+            <div class="file-body">
+              {% if f.supported %}
+                <a class="file-name" href="{{ url_for('open_file', filename=f.name) }}" title="{{ f.name }}">{{ f.name }}</a>
+                {% if f.issue_count %}
+                  <span class="file-tag issues">{{ f.issue_count }} issue{{ 's' if f.issue_count != 1 }}</span>
+                {% elif f.issue_count == 0 %}
+                  <span class="file-tag clean">No issues</span>
+                {% endif %}
+              {% else %}
+                <span class="file-name muted" title="Word/LibreOffice isn't available on this machine so .doc files can't be edited. Please re-save it as .docx in Word first.">
+                  {{ f.name }}
+                </span>
+                <span class="file-tag warn">.doc - not supported</span>
+              {% endif %}
+            </div>
+            {% if f.name == reference %}
+              <span class="ref-badge">reference style</span>
+            {% endif %}
+          </li>
+        {% endfor %}
+        {% if not files %}
+          <li class="empty-hint">No .docx/.doc files found in this folder.</li>
+        {% endif %}
+      </ul>
+    </section>
+
+    <aside class="settings-pane">
+      <section class="panel toolbar-panel">
+        <div class="toolbar-row">
+          <span class="toolbar-folder" title="{{ watch_folder }}">{{ watch_folder }}</span>
+          <div class="toolbar-actions">
+            <form method="post" action="{{ url_for('pick_folder') }}" class="inline-form">
+              <label class="checkbox-line tiny">
+                <input type="checkbox" name="make_default">
+                default
+              </label>
+              <button type="submit" class="small-btn">Change folder</button>
+            </form>
+            <form method="post" action="{{ url_for('import_file') }}" class="inline-form">
+              <button type="submit" class="small-btn">Import file</button>
+            </form>
+          </div>
+        </div>
+        <div class="toolbar-row">
+          <label class="toolbar-name">
+            You:
+            <input type="text" id="display-name-input" value="{{ display_name }}" maxlength="30">
+          </label>
+          {% if reference %}
+            <form method="post" action="{{ url_for('apply_style_all') }}" class="inline-form toolbar-sync">
+              <button type="submit" class="small-btn primary" title="Copies font/size/color from the reference form into every other file's value cells - content is untouched.">
+                Sync font/size/color across all files
+              </button>
+            </form>
+          {% else %}
+            <span class="panel-hint">No reference style file found - put the blank original template in this folder with "original form" in its filename to enable style sync.</span>
+          {% endif %}
+        </div>
+        {% if style_applied %}
+          <div class="notice ok">
+            {% if style_count and style_count|int > 0 %}
+              Style synced to {{ style_applied }}: {{ style_count }} value cell(s) updated{% if style_files and style_files|int > 1 %} across {{ style_files }} file(s){% endif %}.
+            {% else %}
+              Checked {{ style_applied }} - already matched the reference style, nothing to change.
+            {% endif %}
+          </div>
+        {% endif %}
+        {% if folder_saved %}<div class="notice ok">Folder updated for you.</div>{% endif %}
+        {% if imported %}<div class="notice ok">Imported {{ imported }}.</div>{% endif %}
+      </section>
+
+      <section class="panel detail-panel" id="detail-pane">
+        <p class="panel-hint empty-detail">Select a vessel file to see its issues and recent history.</p>
+      </section>
+    </aside>
+  </div>
+
+  {% if style_applied %}
+    <div id="toast" class="toast">
+      {% if style_count and style_count|int > 0 %}
+        Style synced: {{ style_count }} value cell(s) updated{% if style_files and style_files|int > 1 %} across {{ style_files }} file(s){% endif %}.
+      {% else %}
+        {{ style_applied }} already matched the reference style - nothing to change.
+      {% endif %}
+    </div>
+  {% endif %}
+
+  <script src="{{ url_for('static', filename='home.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,69 @@
+<div class="panel-detail-head">
+  <span class="panel-detail-name" title="{{ filename }}">{{ filename }}</span>
+  <a class="small-btn primary" href="{{ url_for('open_file', filename=filename) }}">Open document</a>
+</div>
+
+<div class="detail-section">
+  <div class="detail-section-head" data-toggle="issues">
+    <span class="section-toggle">&#9660;</span>
+    <span>Issues</span>
+    <span class="detail-count">{{ issues|length }}</span>
+  </div>
+  <div class="detail-section-body" data-body="issues">
+    {% if not issues %}
+      <p class="panel-hint">No open issues.</p>
+    {% else %}
+      <div class="issues-list">
+        {% for i in issues %}
+          <button type="button" class="issue-row state-{{ i.state }}"
+                  data-field-id="{{ i.id }}" data-text="{{ i.text }}" data-label="{{ i.label }}">
+            <span class="issue-code">{{ i.item_code }}</span>
+            <span class="issue-label">{{ i.label }}</span>
+            <span class="issue-value">{{ i.text if i.text else '(empty)' }}</span>
+          </button>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="detail-section">
+  <div class="detail-section-head" data-toggle="history">
+    <span class="section-toggle">&#9660;</span>
+    <span>History</span>
+    <span class="detail-count">{{ history|length }}</span>
+  </div>
+  <div class="detail-section-body" data-body="history">
+    {% if has_backup %}
+      <button type="button" class="small-btn danger" data-restore-url="{{ url_for('restore_original', filename=filename) }}">
+        Restore original document
+      </button>
+    {% endif %}
+    {% if not history %}
+      <p class="panel-hint">No edits recorded for this file yet.</p>
+    {% else %}
+      <div class="history-scroll">
+        <table class="history-table compact">
+          <tbody>
+            {% for e in history %}
+              <tr class="{{ 'rename-row' if e.field_id in ('__rename__', '__restore__') else '' }}">
+                <td class="nowrap">{{ e.ts }}</td>
+                <td>{{ e.label }}</td>
+                <td class="old-val">{{ e.old if e.old else '(empty)' }}</td>
+                <td class="new-val">{{ e.new if e.new else '(empty)' }}</td>
+                <td>
+                  {% if e.field_id not in ('__rename__', '__restore__') %}
+                    <button type="button" class="small-btn" data-revert-url="{{ url_for('revert_entry', filename=filename, index=e.index) }}"
+                            data-confirm-value="{{ e.old if e.old else '(empty)' }}">
+                      Revert
+                    </button>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </div>
+</div>

@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ filename }} - Q88 Check</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body data-filename="{{ filename }}" data-readonly="{{ 'true' if read_only else 'false' }}">
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-actions">
+        <button type="button" id="collapse-all-btn" class="small-btn">Collapse all</button>
+        <button type="button" id="expand-all-btn" class="small-btn">Expand all</button>
+      </div>
+      <nav class="sidebar-nav">
+        {% for s in sections %}
+          {% if s.kind == 'heading' %}
+            <a href="#{{ s.id }}" class="nav-heading" data-nav-section="{{ s.id }}">{{ s.text }}</a>
+          {% else %}
+            <a href="#{{ s.id }}" class="nav-subheading" data-nav-section="{{ s.parent }}">{{ s.text }}</a>
+          {% endif %}
+        {% endfor %}
+      </nav>
+    </aside>
+
+    <div class="main-pane">
+      {% if read_only %}
+        <div class="lock-banner">
+          {{ lock_holder_name }} is currently editing this file, so it's open read-only. It will become editable automatically once they're done.
+          <button type="button" id="refresh-lock-btn">Refresh</button>
+        </div>
+      {% endif %}
+      {% if conflict %}
+        <div class="lock-banner conflict">
+          Someone else opened this file while you were editing, so your save was rejected. Please refresh and try again.
+        </div>
+      {% endif %}
+      <form method="post" action="{{ url_for('save_file', filename=filename) }}" id="q88-form">
+        <div class="toolbar">
+          <a href="{{ url_for('index') }}">&larr; Files</a>
+          <span class="app-bar-version">v{{ app_version }}</span>
+          <span class="filename">{{ filename }}</span>
+          <a href="{{ url_for('history', filename=filename) }}" class="history-link">History</a>
+          <label>Warn within (days):
+            <input type="number" name="warning_days_view" id="warning_days_view" value="{{ warning_days }}" min="0" style="width:4em" {{ 'disabled' if read_only }}>
+          </label>
+          <button type="button" id="apply-warning-days" {{ 'disabled' if read_only }}>Apply</button>
+          <input type="hidden" name="warning_days" id="warning_days" value="{{ warning_days }}">
+          {% if not read_only %}<button type="submit">Save</button>{% endif %}
+          {% if saved %}<span class="saved-msg">Saved</span>{% endif %}
+          <span class="legend">
+            <span class="swatch state-EXPIRED"></span>Expired
+            <span class="swatch state-WARNING"></span>Expiring soon
+            <span class="swatch state-MISSING"></span>Missing
+            <span class="swatch recent-swatch"></span>Recently changed
+          </span>
+        </div>
+
+        <table class="q88-table">
+          {% for row in rows %}
+            {% if row.type == 'heading' %}
+              <tr class="row-heading" id="{{ row.section_id }}" data-section="{{ row.section_id }}">
+                <td colspan="4">
+                  <span class="section-toggle" data-toggle-section="{{ row.section_id }}">&#9660;</span>
+                  {{ row.text }}
+                </td>
+              </tr>
+            {% elif row.type == 'subheading' %}
+              <tr class="row-subheading" id="{{ row.anchor_id }}" data-section="{{ row.section_id }}">
+                <td colspan="4">{{ row.text }}</td>
+              </tr>
+            {% elif row.type == 'label' %}
+              <tr class="row-label" data-section="{{ row.section_id }}">
+                <td class="item-code">{{ row.item_code }}</td>
+                <td colspan="3">{{ row.text }}</td>
+              </tr>
+            {% elif row.type == 'field' %}
+              <tr class="row-field state-{{ row.display_state }} {{ 'recently-changed' if row.recently_changed }}" id="field-{{ row.id }}" data-section="{{ row.section_id }}">
+                <td class="item-code">{{ row.item_code }}</td>
+                <td class="label">
+                  {{ row.label }}
+                  {% if row.column_header %}<span class="col-header">({{ row.column_header }})</span>{% endif %}
+                </td>
+                <td class="value">
+                  <input type="text" name="f_{{ row.id }}" value="{{ row.text }}" {{ 'disabled' if read_only }}>
+                </td>
+                <td class="na-cell">
+                  {% if row.show_na_checkbox %}
+                    <label class="na-label">
+                      <input type="checkbox" name="na_{{ row.id }}" {% if row.na_checked %}checked{% endif %} {{ 'disabled' if read_only }}>
+                      N/A
+                    </label>
+                  {% endif %}
+                </td>
+              </tr>
+            {% elif row.type == 'table' %}
+              <tr class="row-table-wrap" data-section="{{ row.section_id }}">
+                <td colspan="4">
+                  <div class="sub-table-title">
+                    <span class="item-code">{{ row.item_code }}</span> {{ row.label }}
+                  </div>
+                  <table class="sub-table">
+                    <thead>
+                      <tr>
+                        {% if not row.editable_rows %}
+                          <th class="row-name-col"></th>
+                          <th class="row-name-col">Description</th>
+                        {% endif %}
+                        {% for h in row.headers %}<th>{{ h }}</th>{% endfor %}
+                        {% if row.editable_rows and not read_only %}<th></th>{% endif %}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for tr in row.rows %}
+                        <tr>
+                          {% if not row.editable_rows %}
+                            <td class="row-name-col">{{ tr.row_item_code }}</td>
+                            <td class="row-name-col">{{ tr.row_label }}</td>
+                          {% endif %}
+                          {% for c in tr.cells %}
+                            <td class="state-{{ c.display_state }} {{ 'recently-changed' if c.recently_changed }}" id="field-{{ c.id }}">
+                              <input type="text" name="f_{{ c.id }}" value="{{ c.text }}" {{ 'disabled' if read_only }}>
+                              {% if c.show_na_checkbox %}
+                                <label class="na-label small">
+                                  <input type="checkbox" name="na_{{ c.id }}" {% if c.na_checked %}checked{% endif %} {{ 'disabled' if read_only }}>
+                                  N/A
+                                </label>
+                              {% endif %}
+                            </td>
+                          {% endfor %}
+                          {% if row.editable_rows and not read_only %}
+                            <td>
+                              <button type="submit" class="small-btn danger"
+                                formaction="{{ url_for('delete_row', filename=filename, table_key=row.key, row_index=loop.index0) }}">
+                                Delete
+                              </button>
+                            </td>
+                          {% endif %}
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                  {% if row.editable_rows and not read_only %}
+                    <button type="submit" class="small-btn"
+                      formaction="{{ url_for('add_row', filename=filename, table_key=row.key) }}">
+                      + Add row
+                    </button>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endif %}
+          {% endfor %}
+        </table>
+      </form>
+    </div>
+  </div>
+
+  <button type="button" id="issues-fab" class="{{ 'issues-fab' if issues else 'issues-fab empty' }}">
+    Issues ({{ issues|length }})
+  </button>
+
+  {% if issues %}
+    <div id="issues-panel" class="issues-panel">
+      <div class="issues-panel-header">
+        <strong>{{ issues|length }} item(s) need attention</strong>
+        <button type="button" id="issues-close-btn">&times;</button>
+      </div>
+      <div class="issues-list">
+        {% for iss in issues %}
+          <a href="#field-{{ iss.id }}" class="issue-row state-{{ iss.state }}">
+            <span class="issue-code">{{ iss.item_code }}</span>
+            <span class="issue-label">{{ iss.label }}</span>
+            <span class="issue-value">{{ iss.text if iss.text else '(empty)' }}</span>
+          </a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

@@ -111,32 +111,43 @@ def find_reference_file(files):
 
 def _compute_issues(path, warning_days=DEFAULT_WARNING_DAYS):
     """Every currently-flagged field in a document, newest/most-severe first.
-    Shared by the file-list issue count and the home-page detail panel."""
+    Shared by the file-list issue count and the home-page detail panel.
+
+    A multi-column table row (e.g. one row, five columns) collapses to at
+    most one issue - if every cell in the row is filled (or N/A-checked),
+    the row has no issue; otherwise one issue represents the whole row,
+    at its most severe cell's state."""
     ext = parser.extract(docx.Document(path))
     st = statemod.load_state(path)
     today = datetime.date.today()
+    state_order = {"EXPIRED": 0, "WARNING": 1, "MISSING": 2}
 
-    cells = []
+    def cell_state(fid, label, col):
+        cell = ext.cell_map.get(fid)
+        if cell is None or st["na_flags"].get(fid):
+            return None, ""
+        state, _ = rules.classify(label, col, cell.text.strip(), warning_days=warning_days, today=today)
+        return state, cell.text.strip()
+
+    issues = []
     for r in ext.display_rows:
         if r["type"] == "field":
-            cells.append((r["id"], r["label"], r["column_header"], r["item_code"]))
+            state, text = cell_state(r["id"], r["label"], r["column_header"])
+            if state in rules.HIGHLIGHTABLE:
+                full_label = f"{r['label']} ({r['column_header']})" if r["column_header"] else r["label"]
+                issues.append({"id": r["id"], "item_code": r["item_code"], "label": full_label, "text": text, "state": state})
         elif r["type"] == "table":
             for tr in r["rows"]:
                 item_code = tr.get("row_item_code") or r["item_code"]
+                row_flagged = []
                 for c in tr["cells"]:
-                    cells.append((c["id"], tr["row_label"], c["column_header"], item_code))
+                    state, _ = cell_state(c["id"], tr["row_label"], c["column_header"])
+                    if state in rules.HIGHLIGHTABLE:
+                        row_flagged.append((state, c["id"]))
+                if row_flagged:
+                    worst_state = min((s for s, _ in row_flagged), key=lambda s: state_order.get(s, 9))
+                    issues.append({"id": row_flagged[0][1], "item_code": item_code, "label": tr["row_label"], "text": "", "state": worst_state})
 
-    issues = []
-    for fid, label, col, item_code in cells:
-        cell = ext.cell_map.get(fid)
-        if cell is None:
-            continue
-        state, _ = rules.classify(label, col, cell.text.strip(), warning_days=warning_days, today=today)
-        if state in rules.HIGHLIGHTABLE and not st["na_flags"].get(fid):
-            full_label = f"{label} ({col})" if col else label
-            issues.append({"id": fid, "item_code": item_code, "label": full_label, "text": cell.text.strip(), "state": state})
-
-    state_order = {"EXPIRED": 0, "WARNING": 1, "MISSING": 2}
     issues.sort(key=lambda x: state_order.get(x["state"], 9))
     return issues
 
@@ -265,7 +276,9 @@ def open_file(filename):
     issues = []
     recently_changed = set(st.get("last_changed_ids", []))
 
-    def classify_cell(cell_rec, label, column_header, item_code):
+    state_order = {"EXPIRED": 0, "WARNING": 1, "MISSING": 2}
+
+    def classify_cell(cell_rec, label, column_header, item_code, collect=True):
         computed_state, _ = rules.classify(
             label, column_header, cell_rec["text"],
             warning_days=warning_days, today=today,
@@ -276,12 +289,13 @@ def open_file(filename):
         cell_rec["na_checked"] = na_checked
         cell_rec["show_na_checkbox"] = computed_state in rules.HIGHLIGHTABLE
         cell_rec["recently_changed"] = cell_rec["id"] in recently_changed
-        if display_state in rules.HIGHLIGHTABLE:
+        if collect and display_state in rules.HIGHLIGHTABLE:
             full_label = f"{label} ({column_header})" if column_header else label
             issues.append({
                 "id": cell_rec["id"], "item_code": item_code,
                 "label": full_label, "text": cell_rec["text"], "state": display_state,
             })
+        return display_state
 
     rows = []
     sections = []  # sidebar nav: [{id, text, kind: 'heading'|'subheading'}]
@@ -308,8 +322,17 @@ def open_file(filename):
                 trc = dict(tr)
                 trc["cells"] = [dict(c) for c in tr["cells"]]
                 item_code = tr.get("row_item_code") or r["item_code"]
+                row_flagged = []
                 for c in trc["cells"]:
-                    classify_cell(c, tr["row_label"], c["column_header"], item_code)
+                    cell_state = classify_cell(c, tr["row_label"], c["column_header"], item_code, collect=False)
+                    if cell_state in rules.HIGHLIGHTABLE:
+                        row_flagged.append((cell_state, c["id"]))
+                if row_flagged:
+                    worst_state = min((s for s, _ in row_flagged), key=lambda s: state_order.get(s, 9))
+                    issues.append({
+                        "id": row_flagged[0][1], "item_code": item_code,
+                        "label": tr["row_label"], "text": "", "state": worst_state,
+                    })
                 row["rows"].append(trc)
             rows.append(row)
         else:
@@ -319,7 +342,6 @@ def open_file(filename):
                 row["anchor_id"] = sections[-1]["id"]
             rows.append(row)
 
-    state_order = {"EXPIRED": 0, "WARNING": 1, "MISSING": 2}
     issues.sort(key=lambda x: state_order.get(x["state"], 9))
 
     return render_template(

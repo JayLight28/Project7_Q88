@@ -120,12 +120,20 @@ function q88InitPage() {
       }
     });
 
+    var saveStatus = document.getElementById("save-status");
+    function setSaveStatus(text, isError) {
+      if (!saveStatus) return;
+      saveStatus.textContent = text;
+      saveStatus.classList.toggle("error", !!isError);
+    }
+
     form.addEventListener("submit", function (e) {
       e.preventDefault();
       var submitter = e.submitter;
       var url = (submitter && submitter.getAttribute("formaction")) || form.action;
       var formData = new FormData(form);
       sessionStorage.setItem(scrollKey, window.scrollY);
+      setSaveStatus("Saving...", false);
 
       fetch(url, { method: "POST", body: formData })
         .then(function (r) { return r.text(); })
@@ -138,8 +146,14 @@ function q88InitPage() {
           document.title = newDoc.title;
           dirty = false;
           q88InitPage();
+          var now = new Date();
+          var hh = String(now.getHours()).padStart(2, "0");
+          var mm = String(now.getMinutes()).padStart(2, "0");
+          var status = document.getElementById("save-status");
+          if (status) { status.textContent = "Saved at " + hh + ":" + mm; status.classList.remove("error"); }
         })
         .catch(function () {
+          setSaveStatus("Save failed - retrying...", true);
           // network hiccup - fall back to a normal submit so the edit isn't lost
           // (HTMLFormElement.submit() bypasses the "submit" event, so this won't loop)
           form.submit();

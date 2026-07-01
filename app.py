@@ -28,6 +28,10 @@ FOLDER_COOKIE = "q88_folder"
 FILENAME_RE = re.compile(r"^(Q88 V6 )([^ ]+)( )(.+)(\.docx)$", re.IGNORECASE)
 
 app = Flask(__name__)
+# The Q88 questionnaire form has thousands of fields (one per cell), well past
+# Werkzeug's default max_form_parts=1000 - without this, /save 413s on any
+# full-size document.
+app.config["MAX_FORM_PARTS"] = 10000
 
 # in-memory cache of the most recently opened document, keyed by "folder::filename"
 # (folder is per-browser now, so two people can look at different folders at once

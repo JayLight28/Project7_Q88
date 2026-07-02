@@ -56,12 +56,26 @@ document.addEventListener("DOMContentLoaded", function () {
 
   cards.forEach(function (card) {
     card.addEventListener("click", function (e) {
-      if (e.target.closest("a")) return;
+      if (e.target.closest("a, .rename-btn")) return;
       selectCard(card);
     });
     card.addEventListener("dblclick", function (e) {
-      if (e.target.closest("a")) return;
+      if (e.target.closest("a, .rename-btn")) return;
       window.location.href = "/open/" + encodeURIComponent(card.getAttribute("data-filename"));
+    });
+  });
+
+  // --- rename ---
+  document.querySelectorAll(".rename-btn").forEach(function (btn) {
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var oldName = btn.getAttribute("data-filename");
+      var newName = window.prompt("New file name:", oldName);
+      if (!newName || newName === oldName) return;
+      var body = new FormData();
+      body.append("new_name", newName);
+      fetch("/rename_file/" + encodeURIComponent(oldName), { method: "POST", body: body })
+        .then(function () { window.location.reload(); });
     });
   });
 

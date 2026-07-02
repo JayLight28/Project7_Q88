@@ -27,10 +27,18 @@
           <li class="{{ 'file-card' if f.supported else 'file-card disabled' }}"
               data-mtime="{{ f.mtime }}"
               {% if f.supported %}data-filename="{{ f.name }}"{% endif %}>
-            <div class="file-icon">{{ 'DOCX' if f.supported else 'DOC' }}</div>
             <div class="file-body">
               {% if f.supported %}
-                <a class="file-name" href="{{ url_for('open_file', filename=f.name) }}" title="{{ f.name }}">{{ f.name }}</a>
+                <div class="file-name-row">
+                  <a class="file-name" href="{{ url_for('open_file', filename=f.name) }}" title="{{ f.name }}">{{ f.name }}</a>
+                  <button type="button" class="rename-btn" data-filename="{{ f.name }}" title="Rename file">&#9998;</button>
+                </div>
+                {% if f.vessel_name or f.flag %}
+                  <div class="file-meta">
+                    {% if f.vessel_name %}<span class="file-vessel">{{ f.vessel_name }}</span>{% endif %}
+                    {% if f.flag %}<span class="file-flag">{{ f.flag }}</span>{% endif %}
+                  </div>
+                {% endif %}
                 {% if f.issue_count %}
                   <span class="file-tag issues">{{ f.issue_count }} issue{{ 's' if f.issue_count != 1 }}</span>
                 {% elif f.issue_count == 0 %}
@@ -97,6 +105,10 @@
         {% endif %}
         {% if folder_saved %}<div class="notice ok">Folder updated for you.</div>{% endif %}
         {% if imported %}<div class="notice ok">Imported {{ imported }}.</div>{% endif %}
+        {% if renamed %}<div class="notice ok">Renamed to {{ renamed }}.</div>{% endif %}
+        {% if rename_error == "exists" %}<div class="notice error">A file with that name already exists.</div>{% endif %}
+        {% if rename_error == "empty" %}<div class="notice error">Enter a file name.</div>{% endif %}
+        {% if rename_error == "locked" %}<div class="notice error">Someone else is currently editing this file.</div>{% endif %}
       </section>
 
       <section class="panel detail-panel" id="detail-pane">

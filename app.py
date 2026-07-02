@@ -41,6 +41,13 @@ app.config["MAX_FORM_PARTS"] = 10000
 _OPEN_CACHE = {}
 _cache_mutex = threading.Lock()
 
+# home-page file-list cache (issue count + vessel name/flag), keyed by
+# (path, mtime) - parsing a large .docx and classifying every cell costs
+# ~0.5-1s; without this, the home page re-did that for every file on every
+# load (10 files -> 10+ seconds).
+_FILE_SCAN_CACHE = {}
+_file_scan_mutex = threading.Lock()
+
 
 def _key(folder, filename):
     return f"{folder}::{filename}"
@@ -123,15 +130,19 @@ def find_reference_file(files):
     return None
 
 
-def _compute_issues(path, warning_days=DEFAULT_WARNING_DAYS):
+def _compute_issues(path, warning_days=DEFAULT_WARNING_DAYS, ext=None):
     """Every currently-flagged field in a document, newest/most-severe first.
     Shared by the file-list issue count and the home-page detail panel.
 
     A multi-column table row (e.g. one row, five columns) collapses to at
     most one issue - if every cell in the row is filled (or N/A-checked),
     the row has no issue; otherwise one issue represents the whole row,
-    at its most severe cell's state."""
-    ext = parser.extract(docx.Document(path))
+    at its most severe cell's state.
+
+    Pass a pre-parsed `ext` (e.g. from `_quick_scan`) to avoid re-parsing the
+    same .docx twice in one request."""
+    if ext is None:
+        ext = parser.extract(docx.Document(path))
     st = statemod.load_state(path)
     today = datetime.date.today()
     state_order = {"EXPIRED": 0, "WARNING": 1, "MISSING": 2}
@@ -166,13 +177,43 @@ def _compute_issues(path, warning_days=DEFAULT_WARNING_DAYS):
     return issues
 
 
-def _quick_issue_count(path):
-    """Lightweight pass for the file-list cards: how many fields are currently
-    flagged, using the default warning window."""
+def _quick_scan(path):
+    """One parse per (path, mtime) for the home-page file cards: how many
+    fields are flagged, plus the vessel name/IMO (item 1.2) and flag/port of
+    registry (item 1.5) so a vessel is identifiable without opening the file.
+    Cached so the home page doesn't re-parse every file's full .docx on every
+    load - that alone used to take 10+ seconds across a 10-file folder."""
     try:
-        return len(_compute_issues(path))
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return None
+
+    cache_key = (path, mtime)
+    with _file_scan_mutex:
+        if cache_key in _FILE_SCAN_CACHE:
+            return _FILE_SCAN_CACHE[cache_key]
+
+    try:
+        ext = parser.extract(docx.Document(path))
+        issue_count = len(_compute_issues(path, ext=ext))
+        vessel_name = ""
+        flag = ""
+        for r in ext.display_rows:
+            if r["type"] != "field":
+                continue
+            if r["item_code"] == "1.2":
+                vessel_name = ext.cell_map[r["id"]].text.strip()
+            elif r["item_code"] == "1.5":
+                flag = ext.cell_map[r["id"]].text.strip()
+        result = {"issue_count": issue_count, "vessel_name": vessel_name, "flag": flag}
     except Exception:
         return None
+
+    with _file_scan_mutex:
+        for stale_key in [k for k in _FILE_SCAN_CACHE if k[0] == path]:
+            del _FILE_SCAN_CACHE[stale_key]
+        _FILE_SCAN_CACHE[cache_key] = result
+    return result
 
 
 def _native_folder_dialog(initialdir):
@@ -205,10 +246,10 @@ def index():
     folder = get_current_folder()
     files = list_files(folder)
     for f in files:
-        if f["supported"]:
-            f["issue_count"] = _quick_issue_count(os.path.join(folder, f["name"]))
-        else:
-            f["issue_count"] = None
+        scan = _quick_scan(os.path.join(folder, f["name"])) if f["supported"] else None
+        f["issue_count"] = scan["issue_count"] if scan else None
+        f["vessel_name"] = scan["vessel_name"] if scan else ""
+        f["flag"] = scan["flag"] if scan else ""
     reference = find_reference_file(files)
     return render_template(
         "index.html", files=files, reference=reference,
@@ -219,6 +260,8 @@ def index():
         watch_folder=folder,
         folder_saved=request.args.get("folder_saved") == "1",
         imported=request.args.get("imported"),
+        renamed=request.args.get("renamed"),
+        rename_error=request.args.get("rename_error"),
     )
 
 
@@ -259,6 +302,35 @@ def import_file():
         shutil.copy2(chosen, dest_path)
 
     return redirect(url_for("index", imported=dest_name))
+
+
+@app.route("/rename_file/<path:filename>", methods=["POST"])
+def rename_file(filename):
+    folder = get_current_folder()
+    lock_key = _key(folder, filename)
+    client_id = get_client_id()
+    if not locks.is_owner(lock_key, client_id):
+        return redirect(url_for("index", rename_error="locked"))
+
+    new_name = os.path.basename((request.form.get("new_name") or "").strip())
+    if not new_name:
+        return redirect(url_for("index", rename_error="empty"))
+    if not new_name.lower().endswith(".docx"):
+        new_name += ".docx"
+
+    path = _safe_path(folder, filename)
+    new_path = os.path.join(folder, new_name)
+    if os.path.exists(new_path):
+        return redirect(url_for("index", rename_error="exists"))
+
+    _, ok = _manual_rename(path, new_name, get_display_name())
+    if ok:
+        _OPEN_CACHE.pop(lock_key, None)
+        with _file_scan_mutex:
+            for stale_key in [k for k in _FILE_SCAN_CACHE if k[0] == path]:
+                del _FILE_SCAN_CACHE[stale_key]
+
+    return redirect(url_for("index", renamed=new_name if ok else None))
 
 
 @app.route("/set_name", methods=["POST"])
@@ -592,6 +664,29 @@ def _rename_for_date(path, new_date_text, by):
     if os.path.exists(old_state):
         os.rename(old_state, statemod.state_path(new_path))
     return new_path
+
+
+def _manual_rename(path, new_name, by):
+    """User-triggered rename from the home page (any new name, not just a
+    date-field update) - also moves the state/backup sidecar files so
+    history and 'restore original' keep working under the new name."""
+    dirname, base = os.path.split(path)
+    new_path = os.path.join(dirname, new_name)
+    if new_path == path or os.path.exists(new_path):
+        return path, False
+
+    st = statemod.load_state(path)
+    statemod.record_edit(st, "__rename__", "Filename", base, new_name, by=by)
+    statemod.save_state(path, st)
+
+    os.rename(path, new_path)
+    old_state = statemod.state_path(path)
+    if os.path.exists(old_state):
+        os.rename(old_state, statemod.state_path(new_path))
+    old_backup = statemod.backup_path(path)
+    if os.path.exists(old_backup):
+        os.rename(old_backup, statemod.backup_path(new_path))
+    return new_path, True
 
 
 def _maybe_rename_by_date_field(ext, path, by):

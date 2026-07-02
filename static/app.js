@@ -5,24 +5,6 @@ function q88InitPage() {
   var scrollKey = filename ? "q88-scroll:" + filename : null;
   var collapseKey = filename ? "q88-collapsed:" + filename : null;
 
-  // --- warning-days control ---
-  var viewInput = document.getElementById("warning_days_view");
-  var hiddenInput = document.getElementById("warning_days");
-  var applyBtn = document.getElementById("apply-warning-days");
-
-  if (viewInput && hiddenInput) {
-    viewInput.addEventListener("input", function () {
-      hiddenInput.value = viewInput.value;
-    });
-  }
-  if (applyBtn) {
-    applyBtn.addEventListener("click", function () {
-      var url = new URL(window.location.href);
-      url.searchParams.set("warning_days", viewInput.value);
-      window.location.href = url.toString();
-    });
-  }
-
   // --- collapsible sections ---
   function sectionRows(id) {
     return document.querySelectorAll('tr[data-section="' + id + '"]:not(.row-heading)');
@@ -109,7 +91,7 @@ function q88InitPage() {
   if (form) {
     var dirty = false;
     form.addEventListener("input", function (e) {
-      if (e.target.matches('input[type="text"], input[type="checkbox"]')) {
+      if (e.target.matches('input[type="text"], input[type="date"], input[type="checkbox"]')) {
         dirty = true;
       }
     });

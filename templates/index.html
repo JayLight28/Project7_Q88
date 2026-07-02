@@ -17,6 +17,15 @@
       <div class="panel-header">
         <h2>Vessel files</h2>
       </div>
+      {% set has_urgent = tier_totals.EXPIRED or tier_totals.DUE_30 or tier_totals.DUE_60 or tier_totals.DUE_90 %}
+      {% if has_urgent %}
+        <div class="severity-banner">
+          {% if tier_totals.EXPIRED %}<span class="severity-chip state-EXPIRED">{{ tier_totals.EXPIRED }} file(s) expired</span>{% endif %}
+          {% if tier_totals.DUE_30 %}<span class="severity-chip state-DUE_30">{{ tier_totals.DUE_30 }} file(s) due &lt;=30d</span>{% endif %}
+          {% if tier_totals.DUE_60 %}<span class="severity-chip state-DUE_60">{{ tier_totals.DUE_60 }} file(s) due &lt;=60d</span>{% endif %}
+          {% if tier_totals.DUE_90 %}<span class="severity-chip state-DUE_90">{{ tier_totals.DUE_90 }} file(s) due &lt;=90d</span>{% endif %}
+        </div>
+      {% endif %}
       <input type="text" id="file-search" class="file-search" placeholder="Filter by filename...">
       <div class="file-sort">
         <button type="button" data-sort="name" class="active">Name</button>
@@ -26,6 +35,7 @@
         {% for f in files %}
           <li class="{{ 'file-card' if f.supported else 'file-card disabled' }}"
               data-mtime="{{ f.mtime }}"
+              {% if f.worst_state %}data-severity="{{ f.worst_state }}"{% endif %}
               {% if f.supported %}data-filename="{{ f.name }}"{% endif %}>
             <div class="file-body">
               {% if f.supported %}
@@ -37,7 +47,15 @@
                   <div class="file-meta">
                     {% if f.vessel_name %}<span class="file-vessel">{{ f.vessel_name }}</span>{% endif %}
                     {% if f.flag %}<span class="file-flag">{{ f.flag }}</span>{% endif %}
-                    {% if f.issue_count %}
+                    {% if f.worst_state == 'EXPIRED' %}
+                      <span class="file-tag state-EXPIRED">{{ f.worst_count }} expired</span>
+                    {% elif f.worst_state == 'DUE_30' %}
+                      <span class="file-tag state-DUE_30">{{ f.worst_count }} due &lt;=30d</span>
+                    {% elif f.worst_state == 'DUE_60' %}
+                      <span class="file-tag state-DUE_60">{{ f.worst_count }} due &lt;=60d</span>
+                    {% elif f.worst_state == 'DUE_90' %}
+                      <span class="file-tag state-DUE_90">{{ f.worst_count }} due &lt;=90d</span>
+                    {% elif f.issue_count %}
                       <span class="file-tag issues">{{ f.issue_count }} issue{{ 's' if f.issue_count != 1 }}</span>
                     {% elif f.issue_count == 0 %}
                       <span class="file-tag clean">No issues</span>

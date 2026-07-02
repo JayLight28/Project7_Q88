@@ -43,11 +43,6 @@
           <span class="app-bar-version">v{{ app_version }}</span>
           <span class="filename">{{ filename }}</span>
           <a href="{{ url_for('history', filename=filename) }}" class="history-link">&#128337; History</a>
-          <label>Warn within (days):
-            <input type="number" name="warning_days_view" id="warning_days_view" value="{{ warning_days }}" min="0" style="width:4em" {{ 'disabled' if read_only }}>
-          </label>
-          <button type="button" id="apply-warning-days" {{ 'disabled' if read_only }}>Apply</button>
-          <input type="hidden" name="warning_days" id="warning_days" value="{{ warning_days }}">
           {% if not read_only %}<button type="submit">Save</button>{% endif %}
           {% if not read_only %}
             <input type="text" name="new_filename" id="save-as-name" placeholder="Save as filename.docx" style="width:14em">
@@ -58,7 +53,9 @@
           >{% if saved_as %}Saved as {{ saved_as }}{% elif save_as_error == 'exists' %}A file with that name already exists{% elif save_as_error == 'empty' %}Enter a file name for Save As{% endif %}</span>
           <span class="legend">
             <span class="swatch state-EXPIRED"></span>Expired
-            <span class="swatch state-WARNING"></span>Expiring soon
+            <span class="swatch state-DUE_30"></span>Due &lt;=30d
+            <span class="swatch state-DUE_60"></span>Due &lt;=60d
+            <span class="swatch state-DUE_90"></span>Due &lt;=90d
             <span class="swatch state-MISSING"></span>Missing
             <span class="swatch recent-swatch"></span>Recently changed
           </span>
@@ -90,7 +87,11 @@
                   {% if row.column_header %}<span class="col-header">({{ row.column_header }})</span>{% endif %}
                 </td>
                 <td class="value">
-                  <input type="text" name="f_{{ row.id }}" value="{{ row.text }}" {{ 'disabled' if read_only }}>
+                  {% if row.is_date %}
+                    <input type="date" name="f_{{ row.id }}" value="{{ row.date_iso }}" {{ 'disabled' if read_only }}>
+                  {% else %}
+                    <input type="text" name="f_{{ row.id }}" value="{{ row.text }}" {{ 'disabled' if read_only }}>
+                  {% endif %}
                 </td>
                 <td class="na-cell">
                   {% if row.show_na_checkbox %}
@@ -127,7 +128,11 @@
                           {% endif %}
                           {% for c in tr.cells %}
                             <td class="state-{{ c.display_state }} {{ 'recently-changed' if c.recently_changed }}" id="field-{{ c.id }}">
-                              <input type="text" name="f_{{ c.id }}" value="{{ c.text }}" {{ 'disabled' if read_only }}>
+                              {% if c.is_date %}
+                                <input type="date" name="f_{{ c.id }}" value="{{ c.date_iso }}" {{ 'disabled' if read_only }}>
+                              {% else %}
+                                <input type="text" name="f_{{ c.id }}" value="{{ c.text }}" {{ 'disabled' if read_only }}>
+                              {% endif %}
                               {% if c.show_na_checkbox %}
                                 <label class="na-label small">
                                   <input type="checkbox" name="na_{{ c.id }}" {% if c.na_checked %}checked{% endif %} {{ 'disabled' if read_only }}>

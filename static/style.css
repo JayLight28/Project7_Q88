@@ -10,6 +10,10 @@
   --danger-bg: #fbe4e4;
   --warn: #f1c40f;
   --warn-bg: #fdf8ec;
+  --due30: #e67e22;
+  --due30-bg: #fdf2e9;
+  --due90: #f7dc6f;
+  --due90-bg: #fdfaee;
   --expired: #e74c3c;
   --expired-bg: #fdf1f1;
   --missing: #9b8fd1;
@@ -170,7 +174,9 @@ tr[data-section].section-hidden { display: none; }
 .sub-table td input[type="text"] { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; }
 .sub-table td input[type="text"]:focus { outline: none; border-color: var(--navy); box-shadow: 0 0 0 2px rgba(26,82,118,0.12); }
 .sub-table td.state-EXPIRED { background: var(--expired-bg); }
-.sub-table td.state-WARNING { background: var(--warn-bg); }
+.sub-table td.state-DUE_30 { background: var(--due30-bg); }
+.sub-table td.state-DUE_60 { background: var(--warn-bg); }
+.sub-table td.state-DUE_90 { background: var(--due90-bg); }
 .sub-table td.state-MISSING { background: var(--missing-bg); }
 
 .na-label.small { font-size: 10px; display: flex; align-items: center; gap: 2px; margin-top: 2px; }
@@ -229,8 +235,14 @@ tr[data-section].section-hidden { display: none; }
 .row-field.state-EXPIRED { background: var(--expired-bg); }
 .state-EXPIRED .swatch, .swatch.state-EXPIRED { background: var(--expired); }
 
-.row-field.state-WARNING { background: var(--warn-bg); }
-.state-WARNING .swatch, .swatch.state-WARNING { background: var(--warn); }
+.row-field.state-DUE_30 { background: var(--due30-bg); }
+.state-DUE_30 .swatch, .swatch.state-DUE_30 { background: var(--due30); }
+
+.row-field.state-DUE_60 { background: var(--warn-bg); }
+.state-DUE_60 .swatch, .swatch.state-DUE_60 { background: var(--warn); }
+
+.row-field.state-DUE_90 { background: var(--due90-bg); }
+.state-DUE_90 .swatch, .swatch.state-DUE_90 { background: var(--due90); }
 
 .row-field.state-MISSING { background: var(--missing-bg); }
 .state-MISSING .swatch, .swatch.state-MISSING { background: var(--missing); }
@@ -303,7 +315,9 @@ tr[data-section].section-hidden { display: none; }
 }
 .issue-row:hover { background: var(--bg-chrome); }
 .issue-row.state-EXPIRED { border-left-color: var(--expired); }
-.issue-row.state-WARNING { border-left-color: var(--warn); }
+.issue-row.state-DUE_30 { border-left-color: var(--due30); }
+.issue-row.state-DUE_60 { border-left-color: var(--warn); }
+.issue-row.state-DUE_90 { border-left-color: var(--due90); }
 .issue-row.state-MISSING { border-left-color: var(--missing); }
 .issue-code { color: #888; white-space: nowrap; width: 42px; flex-shrink: 0; }
 .issue-label { flex: 1 1 auto; }
@@ -438,6 +452,23 @@ body.home { background: var(--bg-chrome); margin: 0; }
 .file-tag.issues { background: #f8d0d0; color: #7a1f1f; }
 .file-card.selected .file-tag.issues { background: #fff0f0; }
 .file-tag.clean { background: #e5f7e8; color: #1e7a34; }
+
+.file-card[data-severity="EXPIRED"] { border-left: 4px solid var(--expired); background: var(--expired-bg); }
+.file-card[data-severity="DUE_30"] { border-left: 4px solid var(--due30); background: var(--due30-bg); }
+.file-card[data-severity="DUE_60"] { border-left: 4px solid var(--warn); background: var(--warn-bg); }
+.file-card[data-severity="DUE_90"] { border-left: 4px solid var(--due90); background: var(--due90-bg); }
+
+.file-tag.state-EXPIRED { background: var(--expired-bg); color: #7a1f1f; }
+.file-tag.state-DUE_30 { background: var(--due30-bg); color: #7a3d00; }
+.file-tag.state-DUE_60 { background: var(--warn-bg); color: #6b5100; }
+.file-tag.state-DUE_90 { background: var(--due90-bg); color: #6b5100; }
+
+.severity-banner { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.severity-chip { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 4px; }
+.severity-chip.state-EXPIRED { background: var(--expired-bg); color: #7a1f1f; }
+.severity-chip.state-DUE_30 { background: var(--due30-bg); color: #7a3d00; }
+.severity-chip.state-DUE_60 { background: var(--warn-bg); color: #6b5100; }
+.severity-chip.state-DUE_90 { background: var(--due90-bg); color: #6b5100; }
 .empty-hint { color: #999; font-size: 13px; padding: 8px 0; }
 
 /* --- detail panel (issues + recent history for the selected file) --- */

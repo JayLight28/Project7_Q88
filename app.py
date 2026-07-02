@@ -116,10 +116,24 @@ def list_files(folder):
 
 
 def open_document(filename, folder):
+    """Re-reads the .docx from disk unless the cache already holds a parse
+    of this exact on-disk version (same mtime) - e.g. right after this
+    process itself just wrote the file in add_row/delete_row, where
+    re-reading+re-unzipping over a network share is pure overhead."""
     path = _safe_path(folder, filename)
+    key = _key(folder, filename)
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = None
+
+    cached = _OPEN_CACHE.get(key)
+    if cached is not None and mtime is not None and cached.get("mtime") == mtime:
+        return cached["ext"]
+
     doc = docx.Document(path)
     ext = parser.extract(doc)
-    _OPEN_CACHE[_key(folder, filename)] = {"path": path, "doc": doc, "ext": ext}
+    _OPEN_CACHE[key] = {"path": path, "doc": doc, "ext": ext, "mtime": mtime}
     return ext
 
 
@@ -828,7 +842,14 @@ def add_row(filename, table_key):
         statemod.ensure_backup(path)
         parser.add_table_row(nested_table)
         doc.save(path)
-        _OPEN_CACHE.pop(lock_key, None)
+        # Re-parse the doc object already in memory instead of popping the
+        # cache and forcing the next /open to re-read+re-unzip the file from
+        # disk (slow over a network share) - this was the main cost of
+        # add/delete row on large documents.
+        _OPEN_CACHE[lock_key] = {
+            "path": path, "doc": doc, "ext": parser.extract(doc),
+            "mtime": os.path.getmtime(path),
+        }
 
     return redirect(url_for("open_file", filename=filename, warning_days=warning_days))
 
@@ -851,7 +872,10 @@ def delete_row(filename, table_key, row_index):
         statemod.ensure_backup(path)
         parser.delete_table_row(nested_table, row_index)
         doc.save(path)
-        _OPEN_CACHE.pop(lock_key, None)
+        _OPEN_CACHE[lock_key] = {
+            "path": path, "doc": doc, "ext": parser.extract(doc),
+            "mtime": os.path.getmtime(path),
+        }
 
     return redirect(url_for("open_file", filename=filename, warning_days=warning_days))
 

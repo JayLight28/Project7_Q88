@@ -16,7 +16,8 @@
       <div class="issues-list">
         {% for i in issues %}
           <button type="button" class="issue-row state-{{ i.state }}"
-                  data-field-id="{{ i.id }}" data-text="{{ i.text }}" data-label="{{ i.label }}">
+                  data-field-id="{{ i.id }}" data-text="{{ i.text }}" data-label="{{ i.label }}"
+                  data-is-date="{{ 'true' if i.is_date else 'false' }}" data-date-iso="{{ i.date_iso }}">
             <span class="issue-code">{{ i.item_code }}</span>
             <span class="issue-label">{{ i.label }}</span>
             <span class="issue-value">{{ i.text if i.text else '(empty)' }}</span>

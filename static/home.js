@@ -160,7 +160,9 @@ document.addEventListener("DOMContentLoaded", function () {
   function openIssueModal(row) {
     modalFieldId = row.getAttribute("data-field-id");
     modalTitle.textContent = row.getAttribute("data-label");
-    modalText.value = row.getAttribute("data-text") || "";
+    var isDate = row.getAttribute("data-is-date") === "true";
+    modalText.type = isDate ? "date" : "text";
+    modalText.value = isDate ? (row.getAttribute("data-date-iso") || "") : (row.getAttribute("data-text") || "");
     modalNa.checked = false;
     modal.classList.add("open");
     modalText.focus();
@@ -184,7 +186,12 @@ document.addEventListener("DOMContentLoaded", function () {
     })
       .then(function (r) { return r.json(); })
       .then(function (data) {
-        if (!data.ok) return;
+        if (!data.ok) {
+          if (data.error === "locked") {
+            alert("Someone else is currently editing this file - try again once they're done.");
+          }
+          return;
+        }
         closeModal();
         refreshPanel(filename).then(function () { updateCardIssueCount(filename); });
       })

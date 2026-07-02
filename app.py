@@ -18,6 +18,10 @@ from q88 import parser, rules, state as statemod, style as stylemod, locks, conf
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_VERSION = "1.3.0"
 REFERENCE_HINT = "original form"
+
+# Severity order for expiry tiers - most urgent first. Shared by every place
+# that sorts/ranks issues by how soon they need attention.
+TIER_ORDER = {"EXPIRED": 0, "DUE_30": 1, "DUE_60": 2, "DUE_90": 3, "MISSING": 4}
 PORT = 5000
 CLIENT_COOKIE = "q88_client_id"
 NAME_COOKIE = "q88_name"
@@ -161,7 +165,6 @@ def _compute_issues(path, ext=None):
         ext = parser.extract(docx.Document(path))
     st = statemod.load_state(path)
     today = datetime.date.today()
-    state_order = {"EXPIRED": 0, "DUE_30": 1, "DUE_60": 2, "DUE_90": 3, "MISSING": 4}
 
     def cell_state(fid, label, col):
         cell = ext.cell_map.get(fid)
@@ -170,38 +173,52 @@ def _compute_issues(path, ext=None):
         state, _ = rules.classify(label, col, cell.text.strip(), today=today)
         return state, cell.text.strip()
 
+    def date_meta(text):
+        parsed = rules.try_parse_pure_date(text)
+        return (True, parsed.isoformat()) if parsed else (False, "")
+
     issues = []
     for r in ext.display_rows:
         if r["type"] == "field":
             state, text = cell_state(r["id"], r["label"], r["column_header"])
             if state in rules.HIGHLIGHTABLE:
                 full_label = f"{r['label']} ({r['column_header']})" if r["column_header"] else r["label"]
-                issues.append({"id": r["id"], "item_code": r["item_code"], "label": full_label, "text": text, "state": state})
+                is_date, date_iso = date_meta(text)
+                issues.append({
+                    "id": r["id"], "item_code": r["item_code"],
+                    "label": full_label, "text": text, "state": state,
+                    "is_date": is_date, "date_iso": date_iso,
+                })
         elif r["type"] == "table":
             for tr in r["rows"]:
                 item_code = tr.get("row_item_code") or r["item_code"]
                 row_flagged = []
                 for c in tr["cells"]:
-                    state, _ = cell_state(c["id"], tr["row_label"], c["column_header"])
+                    state, text = cell_state(c["id"], tr["row_label"], c["column_header"])
                     if state in rules.HIGHLIGHTABLE:
-                        row_flagged.append((state, c["id"]))
+                        row_flagged.append((state, c["id"], text))
                 if row_flagged:
-                    worst_state = min((s for s, _ in row_flagged), key=lambda s: state_order.get(s, 9))
-                    issues.append({"id": row_flagged[0][1], "item_code": item_code, "label": tr["row_label"], "text": "", "state": worst_state})
+                    worst_state = min((s for s, _, _ in row_flagged), key=lambda s: TIER_ORDER.get(s, 9))
+                    worst_id, worst_text = next((fid, text) for s, fid, text in row_flagged if s == worst_state)
+                    is_date, date_iso = date_meta(worst_text)
+                    issues.append({
+                        "id": worst_id, "item_code": item_code,
+                        "label": tr["row_label"], "text": "", "state": worst_state,
+                        "is_date": is_date, "date_iso": date_iso,
+                    })
 
-    issues.sort(key=lambda x: state_order.get(x["state"], 9))
+    issues.sort(key=lambda x: TIER_ORDER.get(x["state"], 9))
     return issues
 
 
 def _severity_summary(issues):
     """Given the list from _compute_issues, return (worst_state, worst_count) -
     the single most severe tier present and how many issues share it, or
-    (None, 0) if there are no issues. Severity order matches state_order
+    (None, 0) if there are no issues. Severity order matches TIER_ORDER
     elsewhere: EXPIRED is worse than DUE_30, which is worse than MISSING."""
-    tier_rank = {"EXPIRED": 0, "DUE_30": 1, "DUE_60": 2, "DUE_90": 3, "MISSING": 4}
     if not issues:
         return None, 0
-    worst_state = min((i["state"] for i in issues), key=lambda s: tier_rank.get(s, 9))
+    worst_state = min((i["state"] for i in issues), key=lambda s: TIER_ORDER.get(s, 9))
     worst_count = sum(1 for i in issues if i["state"] == worst_state)
     return worst_state, worst_count
 
@@ -448,8 +465,6 @@ def open_file(filename):
     issues = []
     recently_changed = set(st.get("last_changed_ids", []))
 
-    state_order = {"EXPIRED": 0, "DUE_30": 1, "DUE_60": 2, "DUE_90": 3, "MISSING": 4}
-
     def classify_cell(cell_rec, label, column_header, item_code, collect=True):
         computed_state, _ = rules.classify(
             label, column_header, cell_rec["text"], today=today,
@@ -505,7 +520,7 @@ def open_file(filename):
                     if cell_state in rules.HIGHLIGHTABLE:
                         row_flagged.append((cell_state, c["id"]))
                 if row_flagged:
-                    worst_state = min((s for s, _ in row_flagged), key=lambda s: state_order.get(s, 9))
+                    worst_state = min((s for s, _ in row_flagged), key=lambda s: TIER_ORDER.get(s, 9))
                     issues.append({
                         "id": row_flagged[0][1], "item_code": item_code,
                         "label": tr["row_label"], "text": "", "state": worst_state,
@@ -519,7 +534,7 @@ def open_file(filename):
                 row["anchor_id"] = sections[-1]["id"]
             rows.append(row)
 
-    issues.sort(key=lambda x: state_order.get(x["state"], 9))
+    issues.sort(key=lambda x: TIER_ORDER.get(x["state"], 9))
 
     return render_template(
         "document.html",
@@ -580,6 +595,9 @@ def file_panel(filename):
 def field_edit(filename, field_id):
     folder = get_current_folder()
     path = _safe_path(folder, filename)
+    if not locks.is_owner(_key(folder, filename), get_client_id()):
+        return jsonify({"ok": False, "error": "locked"}), 409
+
     cache = _get_or_load_cache(filename, folder)
     doc, ext = cache["doc"], cache["ext"]
 

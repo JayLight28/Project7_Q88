@@ -32,6 +32,9 @@ app = Flask(__name__)
 # Werkzeug's default max_form_parts=1000 - without this, /save 413s on any
 # full-size document.
 app.config["MAX_FORM_PARTS"] = 10000
+# Caps request bodies (incl. /import_file uploads) so one bad upload can't
+# exhaust memory/disk on the single server process serving everyone.
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 
 # in-memory cache of the most recently opened document, keyed by "folder::filename"
 # (folder is per-browser now, so two people can look at different folders at once
@@ -287,6 +290,25 @@ def index():
     )
 
 
+def _is_allowed_folder(folder):
+    """Only folders under one of the configured fleet shares (or a subfolder
+    of one) may become the watch folder - stops any LAN client from typing
+    an arbitrary path into the folder box and browsing/editing whatever
+    .docx files the service account can see there."""
+    try:
+        real = os.path.realpath(folder)
+    except OSError:
+        return False
+    for root in configmod.get_fleets().values():
+        root_real = os.path.realpath(root)
+        try:
+            if os.path.commonpath([root_real, real]) == root_real:
+                return True
+        except ValueError:
+            continue  # different drive/UNC host - definitely not contained
+    return False
+
+
 @app.route("/pick_folder", methods=["POST"])
 def pick_folder():
     typed = (request.form.get("folder_path") or "").strip()
@@ -294,7 +316,7 @@ def pick_folder():
         chosen = typed
     else:
         chosen = _native_folder_dialog(get_current_folder())
-    if not chosen or not os.path.isdir(chosen):
+    if not chosen or not os.path.isdir(chosen) or not _is_allowed_folder(chosen):
         return redirect(url_for("index", rename_error="bad_folder"))
     folder = os.path.normpath(chosen)
 

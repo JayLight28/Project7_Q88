@@ -236,7 +236,8 @@ function q88InitPage() {
 
   if (!readOnly) {
     setInterval(function () {
-      fetch("/heartbeat/" + encodeURIComponent(filename), { method: "POST" });
+      fetch("/heartbeat/" + encodeURIComponent(filename), { method: "POST" })
+        .catch(function (err) { console.error("heartbeat failed", err); });
     }, 60000);
     window.addEventListener("beforeunload", function () {
       navigator.sendBeacon("/release/" + encodeURIComponent(filename));
@@ -256,7 +257,8 @@ function q88InitPage() {
             refreshBtn.textContent = "Now editable - Refresh";
             clearInterval(poll);
           }
-        });
+        })
+        .catch(function (err) { console.error("lock_status poll failed", err); });
     }, 15000);
   }
 }

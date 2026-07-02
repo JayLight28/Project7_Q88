@@ -4,6 +4,11 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
   // --- auto-save display name on blur ---
+  // Uses sendBeacon instead of fetch: blur fires right before a click
+  // navigates away (e.g. opening a file), and a plain fetch() gets
+  // cancelled mid-flight when the page unloads, so the name cookie would
+  // silently never get set. sendBeacon is guaranteed to be delivered even
+  // across a navigation.
   var nameInput = document.getElementById("display-name-input");
   if (nameInput) {
     var lastSaved = nameInput.value;
@@ -12,9 +17,12 @@ document.addEventListener("DOMContentLoaded", function () {
       if (!val || val === lastSaved) return;
       var body = new FormData();
       body.append("display_name", val);
-      fetch("/set_name", { method: "POST", body: body }).then(function () {
-        lastSaved = val;
-      });
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon("/set_name", body);
+      } else {
+        fetch("/set_name", { method: "POST", body: body });
+      }
+      lastSaved = val;
     });
   }
 
@@ -24,6 +32,11 @@ document.addEventListener("DOMContentLoaded", function () {
     importInput.addEventListener("change", function () {
       if (importInput.files.length) importInput.form.submit();
     });
+  }
+
+  function reportNetworkError(err) {
+    console.error(err);
+    alert("Network error - please check your connection and try again.");
   }
 
   // --- vessel file list: single click selects, double click opens ---
@@ -59,7 +72,7 @@ document.addEventListener("DOMContentLoaded", function () {
   function selectCard(card) {
     cards.forEach(function (c) { c.classList.remove("selected"); });
     card.classList.add("selected");
-    refreshPanel(card.getAttribute("data-filename"));
+    refreshPanel(card.getAttribute("data-filename")).catch(reportNetworkError);
   }
 
   cards.forEach(function (card) {
@@ -83,7 +96,8 @@ document.addEventListener("DOMContentLoaded", function () {
       var body = new FormData();
       body.append("new_name", newName);
       fetch("/rename_file/" + encodeURIComponent(oldName), { method: "POST", body: body })
-        .then(function () { window.location.reload(); });
+        .then(function () { window.location.reload(); })
+        .catch(reportNetworkError);
     });
   });
 
@@ -173,7 +187,8 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!data.ok) return;
         closeModal();
         refreshPanel(filename).then(function () { updateCardIssueCount(filename); });
-      });
+      })
+      .catch(reportNetworkError);
   });
 
   // --- clicks inside the fetched detail panel: collapse, issue modal, revert/restore ---
@@ -194,7 +209,8 @@ document.addEventListener("DOMContentLoaded", function () {
           .then(function (r) { return r.json(); })
           .then(function (data) {
             if (data.ok) refreshPanel(filename).then(function () { updateCardIssueCount(filename); });
-          });
+          })
+          .catch(reportNetworkError);
         return;
       }
 
@@ -206,7 +222,8 @@ document.addEventListener("DOMContentLoaded", function () {
           .then(function (r) { return r.json(); })
           .then(function (data) {
             if (data.ok) refreshPanel(fname).then(function () { updateCardIssueCount(fname); });
-          });
+          })
+          .catch(reportNetworkError);
         return;
       }
 

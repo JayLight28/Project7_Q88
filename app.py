@@ -16,7 +16,7 @@ from flask import Flask, render_template, request, redirect, url_for, jsonify, g
 from q88 import parser, rules, state as statemod, style as stylemod, locks, config as configmod
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.3.0"
 DEFAULT_WARNING_DAYS = 60
 REFERENCE_HINT = "original form"
 PORT = 5000

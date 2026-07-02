@@ -1,4 +1,4 @@
-# Q88 Check — Claude Agent Reference (v1.2.1)
+# Q88 Check — Claude Agent Reference (v1.3.0)
 
 > **Primary reference for Claude. Reading this alone covers 80% of tasks.**
 
@@ -9,6 +9,7 @@
 ### Environment
 - Single Windows box: Flask dev server (or waitress) run via `start_server.bat` on `PORT=5000`
 - Vessel `.docx` files live in a shared/network watch folder (per-browser cookie `q88_folder`, default = folder containing `app_config.json`) — never assume a fixed local path
+- Watch folder must resolve under one of the fleet roots in `q88/config.get_fleets()` (currently "Fortune Fleet" / "Local Fleet" on `\\192.168.168.250\marine\Q88 for all Ships\`) — `/pick_folder` rejects anything else via `_is_allowed_folder`
 - `q88/__pycache__` is generated — never hand-edit `.pyc`
 
 ### Code
@@ -54,15 +55,15 @@
 
 | File | Purpose | Entry Point |
 |------|---------|-------------|
-| `app.py` (~789L) | Flask routes, locks/cookies wiring, save/rename logic | routes at top, see table below |
+| `app.py` (~986L) | Flask routes, locks/cookies wiring, save/rename logic | routes at top, see table below |
 | `q88/parser.py` (~294L) | Reads `.docx` tables/cells into structured field data | top |
 | `q88/rules.py` (~75L) | Issue/warning rules (expiry, missing fields) | top |
 | `q88/state.py` (~52L) | Edit-history cache + revert | top |
 | `q88/style.py` (~148L) | Copies formatting from a reference `.docx` to targets | top |
 | `q88/locks.py` (~50L) | In-memory per-file edit lock (180s timeout) | top |
-| `q88/config.py` (~40L) | `app_config.json` read/write — watch folder | top |
-| `static/app.js` (~264L) | Document editor page behavior | top |
-| `static/home.js` (~202L) | File list / folder picker page | top |
+| `q88/config.py` (~53L) | `app_config.json` read/write — watch folder + named fleet folder presets | top |
+| `static/app.js` (~266L) | Document editor page behavior | top |
+| `static/home.js` (~241L) | File list / folder picker page | top |
 | `templates/document.html` | Editor UI | — |
 | `templates/index.html` | Home/file-list UI | — |
 | `templates/history.html` | Per-file revert history UI | — |
@@ -71,35 +72,41 @@
 ### app.py — Routes
 | Route | Line | Purpose |
 |-------|------|---------|
-| `/` | 203 | Home — list files in current folder |
-| `/pick_folder` | 225 | Native folder picker (tkinter dialog) |
-| `/import_file` | 242 | Import a `.docx` into the watch folder |
-| `/set_name` | 264 | Set display name cookie |
-| `/open/<filename>` | 272 | Parse + cache a doc, render editor |
-| `/heartbeat/<filename>` | 377 | Keep-alive to refresh edit lock |
-| `/lock_status/<filename>` | 385 | Poll current lock holder |
-| `/release/<filename>` | 392 | Release edit lock |
-| `/panel/<filename>` | 399 | Re-render side panel (issues/status) |
-| `/field_edit/<filename>/<field_id>` | 417 | Single-field inline edit |
-| `/history/<filename>` | 445 | Edit history view |
-| `/history/<filename>/revert/<index>` | 464 | Revert to a prior value |
-| `/restore_original/<filename>` | 500 | Restore from original reference form |
-| `/save/<filename>` | 615 | Write edits to `.docx`, may rename by date |
-| `/save_as/<filename>` | 642 | Copy current in-browser edits to a new `.docx`, original untouched |
-| `/add_row/<filename>/<table_key>` | 673 | Append a table row |
-| `/delete_row/<filename>/<table_key>/<row_index>` | 696 | Remove a table row |
-| `/apply_style_all` | 733 | Copy style from reference file to all docs |
+| `/` | 261 | Home — list files in current folder, fleet quick-picks |
+| `/pick_folder` | 312 | Switch watch folder (typed path, must resolve under a fleet root — see `_is_allowed_folder`) |
+| `/import_file` | 333 | Import a `.docx` into the watch folder (browser upload; falls back to server-side tkinter dialog) |
+| `/rename_file/<filename>` | 371 | Rename a file from the home page |
+| `/set_name` | 400 | Set display name cookie |
+| `/open/<filename>` | 408 | Parse + cache a doc, render editor |
+| `/heartbeat/<filename>` | 513 | Keep-alive to refresh edit lock |
+| `/lock_status/<filename>` | 521 | Poll current lock holder |
+| `/release/<filename>` | 528 | Release edit lock |
+| `/panel/<filename>` | 535 | Re-render side panel (issues/status) |
+| `/field_edit/<filename>/<field_id>` | 553 | Single-field inline edit |
+| `/history/<filename>` | 581 | Edit history view |
+| `/history/<filename>/revert/<index>` | 600 | Revert to a prior value |
+| `/restore_original/<filename>` | 636 | Restore from original reference form |
+| `/save/<filename>` | 790 | Write edits to `.docx` (archives pre-edit copy to `Obsolete/` first), may rename by date |
+| `/save_as/<filename>` | 818 | Copy current in-browser edits to a new `.docx`, original untouched |
+| `/add_row/<filename>/<table_key>` | 849 | Append a table row |
+| `/delete_row/<filename>/<table_key>/<row_index>` | 879 | Remove a table row |
+| `/apply_style_all` | 919 | Copy style from reference file to all docs |
 
 ### app.py — Key Helpers
 | Function | Line | Purpose |
 |----------|------|---------|
-| `get_client_id` / `get_display_name` / `get_current_folder` | 49/59/63 | Per-browser cookie identity |
-| `_safe_path` | 85 | Containment check — every `<path:filename>` route must resolve through this before touching disk |
-| `_compute_issues` | 126 | Expiry/warning scan for side panel; multi-column table rows collapse to one issue |
-| `_get_or_load_cache` | 531 | `_OPEN_CACHE` lookup keyed by `folder::filename`, guarded by `_cache_mutex` |
-| `_apply_form_edits` | 541 | Bulk-apply submitted form fields |
-| `_maybe_rename_by_date_field` / `_rename_for_date` | 597/573 | Auto-rename `Q88 V6 <code> <date>.docx` when date field changes |
-| `_apply_style_to_file` | 719 | Per-file style copy used by `/apply_style_all` |
+| `get_client_id` / `get_display_name` / `get_current_folder` | 59/69/73 | Per-browser cookie identity |
+| `_safe_path` | 95 | Containment check — every `<path:filename>` route must resolve through this before touching disk |
+| `_compute_issues` | 150 | Expiry/warning scan for side panel; multi-column table rows collapse to one issue |
+| `_is_allowed_folder` | 293 | `/pick_folder` guard — rejects any path not under a configured fleet root (`q88/config.get_fleets`) |
+| `_get_or_load_cache` | 667 | `_OPEN_CACHE` lookup keyed by `folder::filename`, guarded by `_cache_mutex` |
+| `_apply_form_edits` | 677 | Bulk-apply submitted form fields |
+| `_rename_for_date` | 709 | Renames on disk + moves state/backup sidecars |
+| `_archive_previous_version` | 756 | Copies the pre-edit file into `Obsolete/` before `/save` overwrites it |
+| `_maybe_rename_by_date_field` | 772 | Auto-rename `Q88 V6 <code> <date>.docx` when date field changes |
+| `_apply_style_to_file` | 905 | Per-file style copy used by `/apply_style_all` |
+
+`open_document` (121) reuses the cached parse instead of re-reading the file from disk when its stored `mtime` still matches — add_row/delete_row populate that mtime after saving so the post-mutation redirect doesn't force a second full network read+parse.
 
 ---
 

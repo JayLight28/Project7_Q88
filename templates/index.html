@@ -33,16 +33,16 @@
                   <a class="file-name" href="{{ url_for('open_file', filename=f.name) }}" title="{{ f.name }}">{{ f.name }}</a>
                   <button type="button" class="rename-btn" data-filename="{{ f.name }}" title="Rename file">&#9998;</button>
                 </div>
-                {% if f.vessel_name or f.flag %}
+                {% if f.vessel_name or f.flag or f.issue_count is not none %}
                   <div class="file-meta">
                     {% if f.vessel_name %}<span class="file-vessel">{{ f.vessel_name }}</span>{% endif %}
                     {% if f.flag %}<span class="file-flag">{{ f.flag }}</span>{% endif %}
+                    {% if f.issue_count %}
+                      <span class="file-tag issues">{{ f.issue_count }} issue{{ 's' if f.issue_count != 1 }}</span>
+                    {% elif f.issue_count == 0 %}
+                      <span class="file-tag clean">No issues</span>
+                    {% endif %}
                   </div>
-                {% endif %}
-                {% if f.issue_count %}
-                  <span class="file-tag issues">{{ f.issue_count }} issue{{ 's' if f.issue_count != 1 }}</span>
-                {% elif f.issue_count == 0 %}
-                  <span class="file-tag clean">No issues</span>
                 {% endif %}
               {% else %}
                 <span class="file-name muted" title="Word/LibreOffice isn't available on this machine so .doc files can't be edited. Please re-save it as .docx in Word first.">

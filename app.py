@@ -17,7 +17,6 @@ from q88 import parser, rules, state as statemod, style as stylemod, locks, conf
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_VERSION = "1.3.0"
-DEFAULT_WARNING_DAYS = 60
 REFERENCE_HINT = "original form"
 PORT = 5000
 CLIENT_COOKIE = "q88_client_id"
@@ -147,7 +146,7 @@ def find_reference_file(files):
     return None
 
 
-def _compute_issues(path, warning_days=DEFAULT_WARNING_DAYS, ext=None):
+def _compute_issues(path, ext=None):
     """Every currently-flagged field in a document, newest/most-severe first.
     Shared by the file-list issue count and the home-page detail panel.
 
@@ -162,13 +161,13 @@ def _compute_issues(path, warning_days=DEFAULT_WARNING_DAYS, ext=None):
         ext = parser.extract(docx.Document(path))
     st = statemod.load_state(path)
     today = datetime.date.today()
-    state_order = {"EXPIRED": 0, "WARNING": 1, "MISSING": 2}
+    state_order = {"EXPIRED": 0, "DUE_30": 1, "DUE_60": 2, "DUE_90": 3, "MISSING": 4}
 
     def cell_state(fid, label, col):
         cell = ext.cell_map.get(fid)
         if cell is None or st["na_flags"].get(fid):
             return None, ""
-        state, _ = rules.classify(label, col, cell.text.strip(), warning_days=warning_days, today=today)
+        state, _ = rules.classify(label, col, cell.text.strip(), today=today)
         return state, cell.text.strip()
 
     issues = []
@@ -194,6 +193,19 @@ def _compute_issues(path, warning_days=DEFAULT_WARNING_DAYS, ext=None):
     return issues
 
 
+def _severity_summary(issues):
+    """Given the list from _compute_issues, return (worst_state, worst_count) -
+    the single most severe tier present and how many issues share it, or
+    (None, 0) if there are no issues. Severity order matches state_order
+    elsewhere: EXPIRED is worse than DUE_30, which is worse than MISSING."""
+    tier_rank = {"EXPIRED": 0, "DUE_30": 1, "DUE_60": 2, "DUE_90": 3, "MISSING": 4}
+    if not issues:
+        return None, 0
+    worst_state = min((i["state"] for i in issues), key=lambda s: tier_rank.get(s, 9))
+    worst_count = sum(1 for i in issues if i["state"] == worst_state)
+    return worst_state, worst_count
+
+
 def _quick_scan(path):
     """One parse per (path, mtime) for the home-page file cards: how many
     fields are flagged, plus the vessel name/IMO (item 1.2) and flag/port of
@@ -212,7 +224,8 @@ def _quick_scan(path):
 
     try:
         ext = parser.extract(docx.Document(path))
-        issue_count = len(_compute_issues(path, ext=ext))
+        issues = _compute_issues(path, ext=ext)
+        worst_state, worst_count = _severity_summary(issues)
         vessel_name = ""
         flag = ""
         for r in ext.display_rows:
@@ -222,7 +235,10 @@ def _quick_scan(path):
                 vessel_name = ext.cell_map[r["id"]].text.strip()
             elif r["item_code"] == "1.5":
                 flag = ext.cell_map[r["id"]].text.strip()
-        result = {"issue_count": issue_count, "vessel_name": vessel_name, "flag": flag}
+        result = {
+            "issue_count": len(issues), "vessel_name": vessel_name, "flag": flag,
+            "worst_state": worst_state, "worst_count": worst_count,
+        }
     except Exception:
         return None
 
@@ -267,6 +283,12 @@ def index():
         f["issue_count"] = scan["issue_count"] if scan else None
         f["vessel_name"] = scan["vessel_name"] if scan else ""
         f["flag"] = scan["flag"] if scan else ""
+        f["worst_state"] = scan["worst_state"] if scan else None
+        f["worst_count"] = scan["worst_count"] if scan else 0
+    tier_totals = {"EXPIRED": 0, "DUE_30": 0, "DUE_60": 0, "DUE_90": 0}
+    for f in files:
+        if f.get("worst_state") in tier_totals:
+            tier_totals[f["worst_state"]] += 1
     reference = find_reference_file(files)
     fleets = configmod.get_fleets()
     active_fleet = next(
@@ -276,6 +298,7 @@ def index():
     )
     return render_template(
         "index.html", files=files, reference=reference,
+        tier_totals=tier_totals,
         style_applied=request.args.get("style_applied"),
         style_count=request.args.get("style_count"),
         style_files=request.args.get("style_files"),
@@ -420,19 +443,23 @@ def open_file(filename):
     ext = open_document(filename, folder)
     path = _safe_path(folder, filename)
     st = statemod.load_state(path)
-    warning_days = int(request.args.get("warning_days", DEFAULT_WARNING_DAYS))
     today = datetime.date.today()
 
     issues = []
     recently_changed = set(st.get("last_changed_ids", []))
 
-    state_order = {"EXPIRED": 0, "WARNING": 1, "MISSING": 2}
+    state_order = {"EXPIRED": 0, "DUE_30": 1, "DUE_60": 2, "DUE_90": 3, "MISSING": 4}
 
     def classify_cell(cell_rec, label, column_header, item_code, collect=True):
         computed_state, _ = rules.classify(
-            label, column_header, cell_rec["text"],
-            warning_days=warning_days, today=today,
+            label, column_header, cell_rec["text"], today=today,
         )
+        parsed_date = rules.try_parse_pure_date(cell_rec["text"])
+        cell_rec["is_date"] = parsed_date is not None
+        cell_rec["date_iso"] = parsed_date.isoformat() if parsed_date else ""
+        if parsed_date is not None:
+            cell_rec["text"] = rules.format_date(parsed_date)
+
         na_checked = bool(st["na_flags"].get(cell_rec["id"]))
         display_state = "OK" if (na_checked and computed_state in rules.HIGHLIGHTABLE) else computed_state
         cell_rec["display_state"] = display_state
@@ -500,7 +527,6 @@ def open_file(filename):
         rows=rows,
         sections=sections,
         issues=issues,
-        warning_days=warning_days,
         saved=request.args.get("saved") == "1",
         read_only=read_only,
         lock_holder_name=(holder or {}).get("name"),
@@ -562,7 +588,7 @@ def field_edit(filename, field_id):
         return jsonify({"ok": False, "error": "field not found"}), 404
 
     st = statemod.load_state(path)
-    new_text = (request.form.get("text") or "").strip()
+    new_text = rules.normalize_incoming_date((request.form.get("text") or "").strip())
     old_text = cell.text.strip()
     if new_text != old_text:
         label = _field_labels(ext).get(field_id, "")
@@ -687,7 +713,7 @@ def _apply_form_edits(ext, path, form, by):
         if new_text is None:
             continue
         old_text = cell.text.strip()
-        new_text = new_text.strip()
+        new_text = rules.normalize_incoming_date(new_text.strip())
         if new_text != old_text:
             if not changed:
                 statemod.ensure_backup(path)
@@ -792,9 +818,8 @@ def save_file(filename):
     folder = get_current_folder()
     lock_key = _key(folder, filename)
     client_id = get_client_id()
-    warning_days = int(request.form.get("warning_days", DEFAULT_WARNING_DAYS))
     if not locks.is_owner(lock_key, client_id):
-        return redirect(url_for("open_file", filename=filename, warning_days=warning_days, conflict=1))
+        return redirect(url_for("open_file", filename=filename, conflict=1))
 
     cache = _get_or_load_cache(filename, folder)
     doc, ext, path = cache["doc"], cache["ext"], cache["path"]
@@ -812,7 +837,7 @@ def save_file(filename):
 
     locks.release(lock_key, client_id)
 
-    return redirect(url_for("open_file", filename=new_filename, warning_days=warning_days, saved=1))
+    return redirect(url_for("open_file", filename=new_filename, saved=1))
 
 
 @app.route("/save_as/<path:filename>", methods=["POST"])
@@ -822,20 +847,19 @@ def save_as(filename):
     folder = get_current_folder()
     lock_key = _key(folder, filename)
     client_id = get_client_id()
-    warning_days = int(request.form.get("warning_days", DEFAULT_WARNING_DAYS))
     if not locks.is_owner(lock_key, client_id):
-        return redirect(url_for("open_file", filename=filename, warning_days=warning_days, conflict=1))
+        return redirect(url_for("open_file", filename=filename, conflict=1))
 
     new_name = os.path.basename((request.form.get("new_filename") or "").strip())
     if not new_name:
-        return redirect(url_for("open_file", filename=filename, warning_days=warning_days, save_as_error="empty"))
+        return redirect(url_for("open_file", filename=filename, save_as_error="empty"))
     if not new_name.lower().endswith(".docx"):
         new_name += ".docx"
 
     path = _safe_path(folder, filename)
     new_path = os.path.join(folder, new_name)
     if os.path.exists(new_path):
-        return redirect(url_for("open_file", filename=filename, warning_days=warning_days, save_as_error="exists"))
+        return redirect(url_for("open_file", filename=filename, save_as_error="exists"))
 
     fresh_doc = docx.Document(path)
     fresh_doc.save(new_path)
@@ -843,7 +867,7 @@ def save_as(filename):
     if _apply_form_edits(fresh_ext, new_path, request.form, get_display_name()):
         fresh_doc.save(new_path)
 
-    return redirect(url_for("open_file", filename=filename, warning_days=warning_days, saved_as=new_name))
+    return redirect(url_for("open_file", filename=filename, saved_as=new_name))
 
 
 @app.route("/add_row/<path:filename>/<table_key>", methods=["POST"])
@@ -851,9 +875,8 @@ def add_row(filename, table_key):
     folder = get_current_folder()
     lock_key = _key(folder, filename)
     client_id = get_client_id()
-    warning_days = int(request.form.get("warning_days", DEFAULT_WARNING_DAYS))
     if not locks.is_owner(lock_key, client_id):
-        return redirect(url_for("open_file", filename=filename, warning_days=warning_days, conflict=1))
+        return redirect(url_for("open_file", filename=filename, conflict=1))
 
     cache = _get_or_load_cache(filename, folder)
     doc, ext, path = cache["doc"], cache["ext"], cache["path"]
@@ -873,7 +896,7 @@ def add_row(filename, table_key):
             "mtime": os.path.getmtime(path),
         }
 
-    return redirect(url_for("open_file", filename=filename, warning_days=warning_days))
+    return redirect(url_for("open_file", filename=filename))
 
 
 @app.route("/delete_row/<path:filename>/<table_key>/<int:row_index>", methods=["POST"])
@@ -881,9 +904,8 @@ def delete_row(filename, table_key, row_index):
     folder = get_current_folder()
     lock_key = _key(folder, filename)
     client_id = get_client_id()
-    warning_days = int(request.form.get("warning_days", DEFAULT_WARNING_DAYS))
     if not locks.is_owner(lock_key, client_id):
-        return redirect(url_for("open_file", filename=filename, warning_days=warning_days, conflict=1))
+        return redirect(url_for("open_file", filename=filename, conflict=1))
 
     cache = _get_or_load_cache(filename, folder)
     doc, ext, path = cache["doc"], cache["ext"], cache["path"]
@@ -899,7 +921,7 @@ def delete_row(filename, table_key, row_index):
             "mtime": os.path.getmtime(path),
         }
 
-    return redirect(url_for("open_file", filename=filename, warning_days=warning_days))
+    return redirect(url_for("open_file", filename=filename))
 
 
 def _apply_style_to_file(reference_path, target_filename, folder):

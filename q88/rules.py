@@ -23,10 +23,39 @@ STATE_OK = "OK"
 STATE_MISSING = "MISSING"
 STATE_NA = "NOT_APPLICABLE"
 STATE_EXPIRED = "EXPIRED"
-STATE_WARNING = "WARNING"
+STATE_DUE_30 = "DUE_30"
+STATE_DUE_60 = "DUE_60"
+STATE_DUE_90 = "DUE_90"
 STATE_HISTORICAL = "HISTORICAL"
 
-HIGHLIGHTABLE = {STATE_MISSING, STATE_EXPIRED, STATE_WARNING}
+HIGHLIGHTABLE = {STATE_MISSING, STATE_EXPIRED, STATE_DUE_30, STATE_DUE_60, STATE_DUE_90}
+
+MONTH_ABBR = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+]
+
+
+def format_date(d):
+    """dd-mmm-yyyy, locale-independent (never relies on strftime('%b'),
+    which can render non-English month names on a non-English Windows box)."""
+    return f"{d.day:02d}-{MONTH_ABBR[d.month - 1]}-{d.year:04d}"
+
+
+ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def normalize_incoming_date(raw):
+    """Convert a native <input type="date"> submission (always yyyy-mm-dd)
+    into dd-mmm-yyyy. Anything that isn't exactly that ISO shape, or isn't
+    a valid calendar date, passes through unchanged."""
+    if not ISO_DATE_RE.match(raw or ""):
+        return raw
+    try:
+        d = datetime.date.fromisoformat(raw)
+    except ValueError:
+        return raw
+    return format_date(d)
 
 
 def _normalize_na(text):
@@ -43,7 +72,7 @@ def try_parse_date(text):
         return None
 
 
-def classify(label, column_header, text, warning_days=60, today=None):
+def classify(label, column_header, text, today=None):
     """Return (state, parsed_date_or_None)."""
     today = today or datetime.date.today()
     t = (text or "").strip()
@@ -70,6 +99,10 @@ def classify(label, column_header, text, warning_days=60, today=None):
     delta_days = (parsed - today).days
     if delta_days < 0:
         return STATE_EXPIRED, parsed
-    if delta_days <= warning_days:
-        return STATE_WARNING, parsed
+    if delta_days <= 30:
+        return STATE_DUE_30, parsed
+    if delta_days <= 60:
+        return STATE_DUE_60, parsed
+    if delta_days <= 90:
+        return STATE_DUE_90, parsed
     return STATE_OK, parsed

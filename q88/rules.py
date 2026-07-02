@@ -58,6 +58,26 @@ def normalize_incoming_date(raw):
     return format_date(d)
 
 
+DATE_ONLY_RE = re.compile(
+    r"^(\d{1,2}\s*[-/.]\s*\d{1,2}\s*[-/.]\s*\d{2,4})$"
+    r"|^(\d{1,2}\s*[-/. ]?\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[-/. ,]?\s*\d{2,4})$"
+    r"|^((jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2},?\s+\d{2,4})$",
+    re.I,
+)
+
+
+def try_parse_pure_date(text):
+    """Like try_parse_date, but only succeeds when the ENTIRE stripped cell
+    text is a date - not a date embedded in a longer sentence or a compound
+    "date / place" field (e.g. "01 July 2024 / Taichung (Taiwan)"). Used to
+    decide whether to render a calendar picker, since overwriting a compound
+    field's text with just the date portion would destroy the other content."""
+    t = (text or "").strip()
+    if not DATE_ONLY_RE.match(t):
+        return None
+    return try_parse_date(t)
+
+
 def _normalize_na(text):
     return text.strip().upper().replace(" ", "")
 

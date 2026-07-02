@@ -75,3 +75,21 @@ def test_classify_boundary_30_days_is_due_30():
 
 def test_highlightable_has_all_tiers():
     assert rules.HIGHLIGHTABLE == {"MISSING", "EXPIRED", "DUE_30", "DUE_60", "DUE_90"}
+
+
+def test_try_parse_pure_date_accepts_plain_date():
+    assert rules.try_parse_pure_date("20-Jul-2026") == datetime.date(2026, 7, 20)
+    assert rules.try_parse_pure_date("Feb 20, 2027") == datetime.date(2027, 2, 20)
+    assert rules.try_parse_pure_date("01 July 2026") == datetime.date(2026, 7, 1)
+
+
+def test_try_parse_pure_date_rejects_date_plus_place():
+    assert rules.try_parse_pure_date("01 July 2024 / Taichung (Taiwan)") is None
+
+
+def test_try_parse_pure_date_rejects_date_embedded_in_sentence():
+    assert rules.try_parse_pure_date("as it is not a new ship as define in regulation 2.2.18") is None
+
+
+def test_try_parse_pure_date_rejects_name_plus_date():
+    assert rules.try_parse_pure_date("WOO TAE (Sep 16, 2019)") is None

@@ -67,19 +67,33 @@
         <div class="toolbar-row">
           <span class="toolbar-folder" title="{{ watch_folder }}">{{ watch_folder }}</span>
           <div class="toolbar-actions">
+            <div class="fleet-picker">
+              {% for name, path in fleets.items() %}
+                <form method="post" action="{{ url_for('pick_folder') }}" class="inline-form">
+                  <input type="hidden" name="folder_path" value="{{ path }}">
+                  <input type="hidden" name="make_default" value="on">
+                  <button type="submit" class="small-btn fleet-btn{{ ' active' if name == active_fleet }}">{{ name }}</button>
+                </form>
+              {% endfor %}
+            </div>
+            <form method="post" action="{{ url_for('import_file') }}" class="inline-form" enctype="multipart/form-data">
+              <label class="small-btn file-btn" for="import-file-input">Import file</label>
+              <input type="file" name="file" accept=".docx,.doc" id="import-file-input" class="visually-hidden">
+            </form>
+          </div>
+        </div>
+        <div class="toolbar-row">
+          <details class="folder-advanced">
+            <summary>Custom folder path...</summary>
             <form method="post" action="{{ url_for('pick_folder') }}" class="inline-form">
-              <input type="text" name="folder_path" class="folder-path-input" placeholder="Paste folder path (e.g. \\SERVER\share\Q88)" value="{{ watch_folder }}">
+              <input type="text" name="folder_path" class="folder-path-input" placeholder="\\SERVER\share\folder" value="{{ watch_folder }}">
               <label class="checkbox-line tiny">
                 <input type="checkbox" name="make_default">
                 default
               </label>
               <button type="submit" class="small-btn">Change folder</button>
             </form>
-            <form method="post" action="{{ url_for('import_file') }}" class="inline-form" enctype="multipart/form-data">
-              <input type="file" name="file" accept=".docx,.doc" id="import-file-input" class="import-file-input">
-              <button type="submit" class="small-btn">Import file</button>
-            </form>
-          </div>
+          </details>
         </div>
         <div class="toolbar-row">
           <label class="toolbar-name">

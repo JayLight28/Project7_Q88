@@ -38,3 +38,16 @@ def set_watch_folder(folder):
     cfg["watch_folder"] = folder
     _save(cfg)
     return folder
+
+
+_DEFAULT_FLEETS = {
+    "Fortune Fleet": r"\\192.168.168.250\marine\Q88 for all Ships\Fortune Fleet",
+    "Local Fleet": r"\\192.168.168.250\marine\Q88 for all Ships\Local Fleet",
+}
+
+
+def get_fleets():
+    """Named folder presets shown as quick-pick buttons on the home page.
+    Override by adding a "fleets" object to app_config.json."""
+    cfg = _load()
+    return cfg.get("fleets") or _DEFAULT_FLEETS

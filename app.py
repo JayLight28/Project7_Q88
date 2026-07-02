@@ -251,6 +251,12 @@ def index():
         f["vessel_name"] = scan["vessel_name"] if scan else ""
         f["flag"] = scan["flag"] if scan else ""
     reference = find_reference_file(files)
+    fleets = configmod.get_fleets()
+    active_fleet = next(
+        (name for name, p in fleets.items()
+         if os.path.normcase(os.path.normpath(p)) == os.path.normcase(os.path.normpath(folder))),
+        None,
+    )
     return render_template(
         "index.html", files=files, reference=reference,
         style_applied=request.args.get("style_applied"),
@@ -258,6 +264,8 @@ def index():
         style_files=request.args.get("style_files"),
         display_name=get_display_name(),
         watch_folder=folder,
+        fleets=fleets,
+        active_fleet=active_fleet,
         folder_saved=request.args.get("folder_saved") == "1",
         imported=request.args.get("imported"),
         renamed=request.args.get("renamed"),
@@ -709,6 +717,22 @@ def _manual_rename(path, new_name, by):
     return new_path, True
 
 
+def _archive_previous_version(path):
+    """Copy the pre-edit file into an Obsolete/ subfolder next to it before a
+    save overwrites it in place, so prior revisions aren't lost."""
+    if not os.path.exists(path):
+        return
+    dirname, base = os.path.split(path)
+    obsolete_dir = os.path.join(dirname, "Obsolete")
+    os.makedirs(obsolete_dir, exist_ok=True)
+    dest = os.path.join(obsolete_dir, base)
+    if os.path.exists(dest):
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        name, ext = os.path.splitext(base)
+        dest = os.path.join(obsolete_dir, f"{name} ({stamp}){ext}")
+    shutil.copy2(path, dest)
+
+
 def _maybe_rename_by_date_field(ext, path, by):
     """Filenames follow 'Q88 V6 <code> <date>.docx' - keep the date in sync
     with the document's own '1.1 Date updated' field after a save."""
@@ -741,6 +765,7 @@ def save_file(filename):
 
     changed = _apply_form_edits(ext, path, request.form, get_display_name())
     if changed:
+        _archive_previous_version(path)
         doc.save(path)
 
     new_path = _maybe_rename_by_date_field(ext, path, get_display_name())

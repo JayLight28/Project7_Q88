@@ -18,6 +18,14 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
+  // --- import file: auto-submit as soon as a file is picked ---
+  var importInput = document.getElementById("import-file-input");
+  if (importInput) {
+    importInput.addEventListener("change", function () {
+      if (importInput.files.length) importInput.form.submit();
+    });
+  }
+
   // --- vessel file list: single click selects, double click opens ---
   var detailPane = document.getElementById("detail-pane");
   var cards = document.querySelectorAll(".file-card[data-filename]");

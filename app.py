@@ -16,7 +16,7 @@ from flask import Flask, render_template, request, redirect, url_for, jsonify, g
 from q88 import parser, rules, state as statemod, style as stylemod, locks, config as configmod
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 DEFAULT_WARNING_DAYS = 60
 REFERENCE_HINT = "original form"
 PORT = 5000
@@ -854,6 +854,17 @@ def _lan_ip():
 def _open_browser():
     time.sleep(1.2)
     webbrowser.open(f"http://localhost:{PORT}/")
+    # opening the browser steals focus and drops this console window behind
+    # it, making the server look like it "went to background" - bring it
+    # back to the front so it's obviously still running.
+    time.sleep(0.8)
+    try:
+        import ctypes
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+    except Exception:
+        pass
 
 
 def _write_shortcut(folder=None):

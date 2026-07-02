@@ -1,4 +1,4 @@
-# Q88 Check — Claude Agent Reference (v1.2.0)
+# Q88 Check — Claude Agent Reference (v1.2.1)
 
 > **Primary reference for Claude. Reading this alone covers 80% of tasks.**
 

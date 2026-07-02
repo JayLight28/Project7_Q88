@@ -267,9 +267,13 @@ def index():
 
 @app.route("/pick_folder", methods=["POST"])
 def pick_folder():
-    chosen = _native_folder_dialog(get_current_folder())
-    if not chosen:
-        return redirect(url_for("index"))
+    typed = (request.form.get("folder_path") or "").strip()
+    if typed:
+        chosen = typed
+    else:
+        chosen = _native_folder_dialog(get_current_folder())
+    if not chosen or not os.path.isdir(chosen):
+        return redirect(url_for("index", rename_error="bad_folder"))
     folder = os.path.normpath(chosen)
 
     make_default = request.form.get("make_default") == "on"
@@ -285,6 +289,22 @@ def pick_folder():
 @app.route("/import_file", methods=["POST"])
 def import_file():
     folder = get_current_folder()
+    upload = request.files.get("file")
+    if upload and upload.filename:
+        dest_name = os.path.basename(upload.filename)
+        if not dest_name.lower().endswith((".docx", ".doc")):
+            return redirect(url_for("index", rename_error="bad_import"))
+        dest_path = os.path.join(folder, dest_name)
+        if os.path.exists(dest_path):
+            base, ext = os.path.splitext(dest_name)
+            i = 1
+            while os.path.exists(os.path.join(folder, f"{base} ({i}){ext}")):
+                i += 1
+            dest_name = f"{base} ({i}){ext}"
+            dest_path = os.path.join(folder, dest_name)
+        upload.save(dest_path)
+        return redirect(url_for("index", imported=dest_name))
+
     chosen = _native_file_dialog(folder)
     if not chosen:
         return redirect(url_for("index"))

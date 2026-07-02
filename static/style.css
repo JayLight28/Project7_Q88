@@ -379,6 +379,10 @@ body.home { background: var(--bg-chrome); margin: 0; }
   padding: 4px 6px; border: 1px solid var(--border); border-radius: 3px; font-size: 12px; width: 120px;
 }
 .toolbar-sync { margin-left: auto; }
+.folder-path-input {
+  padding: 4px 6px; border: 1px solid var(--border); border-radius: 3px; font-size: 12px; width: 220px;
+}
+.import-file-input { font-size: 12px; max-width: 160px; }
 .small-btn.primary { background: var(--navy); color: white; border-color: var(--navy); }
 
 .file-search {

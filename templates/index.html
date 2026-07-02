@@ -68,13 +68,15 @@
           <span class="toolbar-folder" title="{{ watch_folder }}">{{ watch_folder }}</span>
           <div class="toolbar-actions">
             <form method="post" action="{{ url_for('pick_folder') }}" class="inline-form">
+              <input type="text" name="folder_path" class="folder-path-input" placeholder="Paste folder path (e.g. \\SERVER\share\Q88)" value="{{ watch_folder }}">
               <label class="checkbox-line tiny">
                 <input type="checkbox" name="make_default">
                 default
               </label>
               <button type="submit" class="small-btn">Change folder</button>
             </form>
-            <form method="post" action="{{ url_for('import_file') }}" class="inline-form">
+            <form method="post" action="{{ url_for('import_file') }}" class="inline-form" enctype="multipart/form-data">
+              <input type="file" name="file" accept=".docx,.doc" id="import-file-input" class="import-file-input">
               <button type="submit" class="small-btn">Import file</button>
             </form>
           </div>
@@ -109,6 +111,8 @@
         {% if rename_error == "exists" %}<div class="notice error">A file with that name already exists.</div>{% endif %}
         {% if rename_error == "empty" %}<div class="notice error">Enter a file name.</div>{% endif %}
         {% if rename_error == "locked" %}<div class="notice error">Someone else is currently editing this file.</div>{% endif %}
+        {% if rename_error == "bad_folder" %}<div class="notice error">That folder path doesn't exist or isn't reachable from the server.</div>{% endif %}
+        {% if rename_error == "bad_import" %}<div class="notice error">Only .docx/.doc files can be imported.</div>{% endif %}
       </section>
 
       <section class="panel detail-panel" id="detail-pane">

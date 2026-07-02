@@ -338,8 +338,8 @@ body.home { background: var(--bg-chrome); margin: 0; }
   width: 94%;
   margin: 24px auto;
 }
-.doc-pane { flex: 1 1 56%; min-width: 0; }
-.settings-pane { flex: 1 1 44%; min-width: 340px; display: flex; flex-direction: column; gap: 14px; }
+.doc-pane { flex: 1 1 45%; min-width: 0; }
+.settings-pane { flex: 1 1 55%; min-width: 340px; display: flex; flex-direction: column; gap: 14px; }
 .pane-title { font-size: 15px; color: var(--navy); margin: 4px 0 10px 2px; }
 
 .page { max-width: 900px; margin: -20px auto 40px auto; padding: 0 24px; display: flex; flex-direction: column; gap: 16px; }

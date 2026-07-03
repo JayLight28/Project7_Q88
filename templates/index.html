@@ -33,9 +33,10 @@
       </div>
       <ul class="file-list" id="file-list">
         {% for f in files %}
+          {% set card_severity = f.worst_state or ('MISSING' if f.missing_count else none) %}
           <li class="{{ 'file-card' if f.supported else 'file-card disabled' }}"
               data-mtime="{{ f.mtime }}"
-              {% if f.worst_state %}data-severity="{{ f.worst_state }}"{% endif %}
+              {% if card_severity %}data-severity="{{ card_severity }}"{% endif %}
               {% if f.supported %}data-filename="{{ f.name }}"{% endif %}>
             <div class="file-body">
               {% if f.supported %}
@@ -55,8 +56,9 @@
                       <span class="file-tag state-DUE_60">{{ f.worst_count }} due &lt;=60d</span>
                     {% elif f.worst_state == 'DUE_90' %}
                       <span class="file-tag state-DUE_90">{{ f.worst_count }} due &lt;=90d</span>
-                    {% elif f.issue_count %}
-                      <span class="file-tag issues">{{ f.issue_count }} issue{{ 's' if f.issue_count != 1 }}</span>
+                    {% endif %}
+                    {% if f.missing_count %}
+                      <span class="file-tag state-MISSING">{{ f.missing_count }} empty</span>
                     {% elif f.issue_count == 0 %}
                       <span class="file-tag clean">No issues</span>
                     {% endif %}

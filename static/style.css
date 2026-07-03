@@ -457,11 +457,17 @@ body.home { background: var(--bg-chrome); margin: 0; }
 .file-card[data-severity="DUE_30"] { border-left: 4px solid var(--due30); background: var(--due30-bg); }
 .file-card[data-severity="DUE_60"] { border-left: 4px solid var(--warn); background: var(--warn-bg); }
 .file-card[data-severity="DUE_90"] { border-left: 4px solid var(--due90); background: var(--due90-bg); }
+.file-card[data-severity="MISSING"] { border-left: 4px solid var(--missing); background: var(--missing-bg); }
+/* .selected and [data-severity] tie on specificity, so source order alone
+   would let this light severity background win over .selected's navy -
+   leaving .selected's forced-white text unreadable on it. */
+.file-card.selected[data-severity] { background: var(--navy); }
 
 .file-tag.state-EXPIRED { background: var(--expired-bg); color: #7a1f1f; }
 .file-tag.state-DUE_30 { background: var(--due30-bg); color: #7a3d00; }
 .file-tag.state-DUE_60 { background: var(--warn-bg); color: #6b5100; }
 .file-tag.state-DUE_90 { background: var(--due90-bg); color: #6b5100; }
+.file-tag.state-MISSING { background: var(--missing-bg); color: #4b3f8f; }
 
 .severity-banner { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .severity-chip { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 4px; }

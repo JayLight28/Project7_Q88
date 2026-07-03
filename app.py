@@ -212,15 +212,21 @@ def _compute_issues(path, ext=None):
 
 
 def _severity_summary(issues):
-    """Given the list from _compute_issues, return (worst_state, worst_count) -
-    the single most severe tier present and how many issues share it, or
-    (None, 0) if there are no issues. Severity order matches TIER_ORDER
-    elsewhere: EXPIRED is worse than DUE_30, which is worse than MISSING."""
-    if not issues:
-        return None, 0
-    worst_state = min((i["state"] for i in issues), key=lambda s: TIER_ORDER.get(s, 9))
-    worst_count = sum(1 for i in issues if i["state"] == worst_state)
-    return worst_state, worst_count
+    """Given the list from _compute_issues, return (worst_state, worst_count,
+    missing_count). worst_state/worst_count are the single most severe expiry
+    tier present and how many issues share it, or (None, 0) if there are no
+    expiry-tier issues. missing_count is tracked separately and always
+    reflects the true count of empty fields - it must never be silently
+    hidden just because the file also has an expiry-tier issue (MISSING
+    ranks last in TIER_ORDER, so treating it as "worst" only when nothing
+    else is present would bury it on files that have both)."""
+    missing_count = sum(1 for i in issues if i["state"] == "MISSING")
+    tier_issues = [i for i in issues if i["state"] != "MISSING"]
+    if not tier_issues:
+        return None, 0, missing_count
+    worst_state = min((i["state"] for i in tier_issues), key=lambda s: TIER_ORDER.get(s, 9))
+    worst_count = sum(1 for i in tier_issues if i["state"] == worst_state)
+    return worst_state, worst_count, missing_count
 
 
 def _quick_scan(path):
@@ -242,7 +248,7 @@ def _quick_scan(path):
     try:
         ext = parser.extract(docx.Document(path))
         issues = _compute_issues(path, ext=ext)
-        worst_state, worst_count = _severity_summary(issues)
+        worst_state, worst_count, missing_count = _severity_summary(issues)
         vessel_name = ""
         flag = ""
         for r in ext.display_rows:
@@ -255,6 +261,7 @@ def _quick_scan(path):
         result = {
             "issue_count": len(issues), "vessel_name": vessel_name, "flag": flag,
             "worst_state": worst_state, "worst_count": worst_count,
+            "missing_count": missing_count,
         }
     except Exception:
         return None
@@ -302,6 +309,7 @@ def index():
         f["flag"] = scan["flag"] if scan else ""
         f["worst_state"] = scan["worst_state"] if scan else None
         f["worst_count"] = scan["worst_count"] if scan else 0
+        f["missing_count"] = scan["missing_count"] if scan else 0
     tier_totals = {"EXPIRED": 0, "DUE_30": 0, "DUE_60": 0, "DUE_90": 0}
     for f in files:
         if f.get("worst_state") in tier_totals:

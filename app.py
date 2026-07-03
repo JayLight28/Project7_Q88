@@ -16,7 +16,7 @@ from flask import Flask, render_template, request, redirect, url_for, jsonify, g
 from q88 import parser, rules, state as statemod, style as stylemod, locks, config as configmod
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 REFERENCE_HINT = "original form"
 
 # Severity order for expiry tiers - most urgent first. Shared by every place

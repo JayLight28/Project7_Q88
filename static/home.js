@@ -245,4 +245,170 @@ document.addEventListener("DOMContentLoaded", function () {
       }
     });
   }
+
+  // --- first-run tutorial tour ---
+  // Auto-starts once per browser (localStorage flag, q88_ prefix convention);
+  // the ? button in the app bar replays it anytime.
+  var TOUR_DONE_KEY = "q88_tutorial_done";
+
+  var TOUR_STEPS = [
+    {
+      title: "Welcome to Q88 Check",
+      body: "This tool lets your team review and edit Q88 V6 vessel questionnaire files together. This quick tour shows you around - it only takes a minute.",
+    },
+    {
+      target: ".toolbar-name",
+      focus: "#display-name-input",
+      title: "Tell us who you are",
+      body: "Type your name here - it is saved automatically. Your name shows other users who is editing a file and appears in every file's edit history.",
+      warnIfAnonymous: true,
+    },
+    {
+      target: ".toolbar-panel .toolbar-row",
+      title: "Folder and fleets",
+      body: "This is the folder currently being watched. Use the fleet buttons to jump between fleet folders, or Import file to copy a .docx into the current folder.",
+    },
+    {
+      target: ".doc-pane",
+      title: "Vessel files",
+      body: "Every Q88 file in the folder is listed here. Colored badges warn about expired or soon-due dates and empty fields. Click a file once to inspect it, double-click to open the full editor.",
+    },
+    {
+      target: "#detail-pane",
+      title: "Issues and history",
+      body: "When you select a file, its expiring dates, empty fields and recent edit history appear here. Click an issue row to fix the value right from this panel.",
+    },
+    {
+      target: ".toolbar-sync",
+      title: "Keep formatting consistent",
+      body: "This copies font, size and color from the reference form into every other file's value cells - the values themselves are never touched.",
+    },
+    {
+      target: "#tour-btn",
+      title: "Replay this tour",
+      body: "That's it! You can replay this tutorial anytime by clicking this ? button.",
+    },
+  ];
+
+  var tourActive = false;
+  var tourSteps = [];
+  var tourIndex = 0;
+  var tourSpot = null;
+  var tourTip = null;
+
+  function isAnonymous() {
+    var val = nameInput ? nameInput.value.trim() : "";
+    return !val || val === "Anonymous";
+  }
+
+  function positionStep() {
+    var step = tourSteps[tourIndex];
+    var target = step.target ? document.querySelector(step.target) : null;
+    var pad = 6;
+    if (target) {
+      var rect = target.getBoundingClientRect();
+      tourSpot.style.top = rect.top - pad + "px";
+      tourSpot.style.left = rect.left - pad + "px";
+      tourSpot.style.width = rect.width + pad * 2 + "px";
+      tourSpot.style.height = rect.height + pad * 2 + "px";
+    } else {
+      // centered welcome step: zero-size spotlight still dims the whole page
+      tourSpot.style.top = window.innerHeight / 2 + "px";
+      tourSpot.style.left = window.innerWidth / 2 + "px";
+      tourSpot.style.width = "0px";
+      tourSpot.style.height = "0px";
+    }
+    var tipW = tourTip.offsetWidth;
+    var tipH = tourTip.offsetHeight;
+    var top, left;
+    if (target) {
+      var r = target.getBoundingClientRect();
+      top = r.bottom + pad + 12;
+      if (top + tipH > window.innerHeight - 16) top = r.top - pad - tipH - 12;
+      if (top < 16) top = 16;
+      left = Math.min(Math.max(r.left, 16), window.innerWidth - tipW - 16);
+    } else {
+      top = (window.innerHeight - tipH) / 2;
+      left = (window.innerWidth - tipW) / 2;
+    }
+    tourTip.style.top = top + "px";
+    tourTip.style.left = left + "px";
+  }
+
+  function showStep(i) {
+    tourIndex = i;
+    var step = tourSteps[i];
+    var target = step.target ? document.querySelector(step.target) : null;
+    if (target) target.scrollIntoView({ block: "center" });
+
+    var warn = step.warnIfAnonymous && isAnonymous()
+      ? '<p class="tour-warn">You are currently "Anonymous" - please set your name now.</p>'
+      : "";
+    tourTip.innerHTML =
+      "<h3></h3>" + warn + "<p class='tour-body'></p>" +
+      '<span class="tour-step-count">' + (i + 1) + " / " + tourSteps.length + "</span>" +
+      '<div class="tour-actions">' +
+      '  <button type="button" class="tour-skip">Skip tour</button>' +
+      (i > 0 ? '  <button type="button" class="small-btn tour-back">Back</button>' : "") +
+      '  <button type="button" class="small-btn primary tour-next">' +
+      (i === tourSteps.length - 1 ? "Done" : "Next") + "</button>" +
+      "</div>";
+    tourTip.querySelector("h3").textContent = step.title;
+    tourTip.querySelector(".tour-body").textContent = step.body;
+
+    tourTip.querySelector(".tour-skip").addEventListener("click", endTour);
+    var back = tourTip.querySelector(".tour-back");
+    if (back) back.addEventListener("click", function () { showStep(tourIndex - 1); });
+    tourTip.querySelector(".tour-next").addEventListener("click", function () {
+      if (tourIndex === tourSteps.length - 1) endTour();
+      else showStep(tourIndex + 1);
+    });
+
+    positionStep();
+    if (step.focus) {
+      var f = document.querySelector(step.focus);
+      if (f) f.focus();
+    }
+  }
+
+  function endTour() {
+    if (!tourActive) return;
+    tourActive = false;
+    localStorage.setItem(TOUR_DONE_KEY, "1");
+    if (tourSpot) tourSpot.remove();
+    if (tourTip) tourTip.remove();
+    tourSpot = tourTip = null;
+  }
+
+  function startTour() {
+    if (tourActive) return;
+    // keep only steps whose target actually exists on this render
+    tourSteps = TOUR_STEPS.filter(function (s) {
+      return !s.target || document.querySelector(s.target);
+    });
+    if (!tourSteps.length) return;
+    tourActive = true;
+    tourSpot = document.createElement("div");
+    tourSpot.className = "tour-spotlight";
+    tourTip = document.createElement("div");
+    tourTip.className = "tour-tip";
+    document.body.appendChild(tourSpot);
+    document.body.appendChild(tourTip);
+    showStep(0);
+  }
+
+  window.addEventListener("resize", function () {
+    if (tourActive) positionStep();
+  });
+  window.addEventListener("scroll", function () {
+    if (tourActive) positionStep();
+  }, { passive: true });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && tourActive) endTour();
+  });
+
+  var tourBtn = document.getElementById("tour-btn");
+  if (tourBtn) tourBtn.addEventListener("click", startTour);
+
+  if (!localStorage.getItem(TOUR_DONE_KEY)) startTour();
 });

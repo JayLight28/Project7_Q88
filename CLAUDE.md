@@ -1,4 +1,4 @@
-# Q88 Check — Claude Agent Reference (v1.4.1)
+# Q88 Check — Claude Agent Reference (v1.5.0)
 
 > **Primary reference for Claude. Reading this alone covers 80% of tasks.**
 
@@ -63,7 +63,7 @@
 | `q88/locks.py` (~50L) | In-memory per-file edit lock (180s timeout) | top |
 | `q88/config.py` (~53L) | `app_config.json` read/write — watch folder + named fleet folder presets | top |
 | `static/app.js` (~248L) | Document editor page behavior | top |
-| `static/home.js` (~248L) | File list / folder picker page | top |
+| `static/home.js` (~382L) | File list / folder picker page + first-run tutorial tour (`q88_tutorial_done` localStorage flag, `#tour-btn` replay) | top |
 | `templates/document.html` | Editor UI | — |
 | `templates/index.html` | Home/file-list UI | — |
 | `templates/history.html` | Per-file revert history UI | — |
@@ -166,4 +166,4 @@ Browser (vanilla JS) ──REST──▶ Flask (app.py) ──▶ q88/parser.py 
 For planning/implementing non-trivial changes, use the `superpowers` skill set (`superpowers@superpowers-dev` v6.1.0, installed user-scope — active in new sessions):
 - `docs/superpowers/plans/` — dated implementation plans (`YYYY-MM-DD-<slug>.md`), task-by-task checkboxes, followed via `superpowers:executing-plans`
 
-Only create a plan doc for multi-step or cross-file changes — trivial fixes don't need one. Given the size of this app (~2350 lines total including tests), no `docs_canonical/` suite is needed — the line map in Section 3 above is the single source of truth; re-scan it on `/dock` instead of maintaining a separate REPO_MAP.md.
+Only create a plan doc for multi-step or cross-file changes — trivial fixes don't need one. Given the size of this app (~2480 lines total including tests), no `docs_canonical/` suite is needed — the line map in Section 3 above is the single source of truth; re-scan it on `/dock` instead of maintaining a separate REPO_MAP.md.

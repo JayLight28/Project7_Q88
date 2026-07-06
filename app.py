@@ -585,7 +585,11 @@ def release_lock(filename):
 def file_panel(filename):
     folder = get_current_folder()
     path = _safe_path(folder, filename)
-    issues = _compute_issues(path)
+    # reuse the mtime-checked open cache - the panel is re-fetched after every
+    # home-page quick edit, and re-reading the .docx from the network share
+    # each time made every edit cost a full download+parse
+    ext = open_document(filename, folder)
+    issues = _compute_issues(path, ext=ext)
     st = statemod.load_state(path)
     raw = st.get("history", [])
     entries = [dict(e, index=i) for i, e in enumerate(raw)]
@@ -622,10 +626,13 @@ def field_edit(filename, field_id):
         parser.set_cell_text(cell, new_text)
         statemod.record_edit(st, field_id, label, old_text, new_text, by=get_display_name())
         doc.save(path)
+        # the cached doc/ext were mutated in place and just written out, so
+        # they still match disk - refresh the mtime instead of popping the
+        # cache, which forced a full network re-read+parse on every next edit
+        cache["mtime"] = os.path.getmtime(path)
 
     st["na_flags"][field_id] = request.form.get("na") == "on"
     statemod.save_state(path, st)
-    _OPEN_CACHE.pop(_key(folder, filename), None)
 
     return jsonify({"ok": True})
 
@@ -854,6 +861,9 @@ def save_file(filename):
     if changed:
         _archive_previous_version(path)
         doc.save(path)
+        # keep the cache valid (same in-memory doc we just wrote) so the
+        # redirect back to /open doesn't re-read the file over the network
+        cache["mtime"] = os.path.getmtime(path)
 
     new_path = _maybe_rename_by_date_field(ext, path, get_display_name())
     new_filename = filename

@@ -89,6 +89,10 @@
                 <td class="value">
                   {% if row.is_date %}
                     <input type="date" name="f_{{ row.id }}" value="{{ row.date_iso }}" {{ 'disabled' if read_only }}>
+                  {% elif '\n' in row.text %}
+                    {# single-line <input> silently strips newlines from its value,
+                       which destroyed multiline cells (addresses etc.) on every save #}
+                    <textarea name="f_{{ row.id }}" rows="{{ [row.text.count('\n') + 1, 6]|min }}" {{ 'disabled' if read_only }}>{{ row.text }}</textarea>
                   {% else %}
                     <input type="text" name="f_{{ row.id }}" value="{{ row.text }}" {{ 'disabled' if read_only }}>
                   {% endif %}
@@ -130,6 +134,8 @@
                             <td class="state-{{ c.display_state }} {{ 'recently-changed' if c.recently_changed }}" id="field-{{ c.id }}">
                               {% if c.is_date %}
                                 <input type="date" name="f_{{ c.id }}" value="{{ c.date_iso }}" {{ 'disabled' if read_only }}>
+                              {% elif '\n' in c.text %}
+                                <textarea name="f_{{ c.id }}" rows="{{ [c.text.count('\n') + 1, 6]|min }}" {{ 'disabled' if read_only }}>{{ c.text }}</textarea>
                               {% else %}
                                 <input type="text" name="f_{{ c.id }}" value="{{ c.text }}" {{ 'disabled' if read_only }}>
                               {% endif %}

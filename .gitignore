@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 server.log
 _q88_backups/
+app_config.json

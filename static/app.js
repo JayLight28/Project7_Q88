@@ -91,7 +91,7 @@ function q88InitPage() {
   if (form) {
     var dirty = false;
     form.addEventListener("input", function (e) {
-      if (e.target.matches('input[type="text"], input[type="date"], input[type="checkbox"]')) {
+      if (e.target.matches('input[type="text"], input[type="date"], input[type="checkbox"], textarea')) {
         dirty = true;
       }
     });
@@ -118,8 +118,14 @@ function q88InitPage() {
       sessionStorage.setItem(scrollKey, window.scrollY);
       setSaveStatus("Saving...", false);
 
-      fetch(url, { method: "POST", body: formData })
-        .then(function (r) { return r.text(); })
+      // X-Q88-Ajax makes the server answer a lost-lock conflict with a 409
+      // instead of a redirect (fetch silently follows redirects to a 200,
+      // which would wipe this page and everything typed into it)
+      fetch(url, { method: "POST", body: formData, headers: { "X-Q88-Ajax": "1" } })
+        .then(function (r) {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.text();
+        })
         .then(function (html) {
           var newDoc = new DOMParser().parseFromString(html, "text/html");
           document.body.innerHTML = newDoc.body.innerHTML;
@@ -137,11 +143,16 @@ function q88InitPage() {
             if (status) { status.textContent = "Saved at " + hh + ":" + mm; status.classList.remove("error"); }
           }
         })
-        .catch(function () {
-          setSaveStatus("Save failed - retrying...", true);
-          // network hiccup - fall back to a normal submit so the edit isn't lost
-          // (HTMLFormElement.submit() bypasses the "submit" event, so this won't loop)
-          form.submit();
+        .catch(function (err) {
+          // NEVER navigate away here: replacing/leaving the page on a failed
+          // save is how typed edits got lost (server down -> form.submit()
+          // -> browser error page -> everything gone). Keep the page, keep
+          // the input, let the user press Save again.
+          console.error("save failed", err);
+          var msg = err && err.message === "HTTP 409"
+            ? "Someone else took over editing this file - your typed values are still on this page. Copy anything important, then refresh."
+            : "Save failed (" + (err && err.message ? err.message : "network error") + ") - your edits are still on this page. Please try Save again.";
+          setSaveStatus(msg, true);
         });
     });
   }
@@ -217,6 +228,8 @@ function q88InitPage() {
   if (!filename) return;
 
   if (!readOnly) {
+    // no clearInterval by design: the heartbeat must run for the whole
+    // lifetime of the editor page to keep the server-side edit lock alive
     setInterval(function () {
       fetch("/heartbeat/" + encodeURIComponent(filename), { method: "POST" })
         .catch(function (err) { console.error("heartbeat failed", err); });

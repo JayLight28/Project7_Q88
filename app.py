@@ -16,7 +16,7 @@ from flask import Flask, render_template, request, redirect, url_for, jsonify, g
 from q88 import parser, rules, state as statemod, style as stylemod, locks, config as configmod
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = "1.5.1"
+APP_VERSION = "1.5.2"
 REFERENCE_HINT = "original form"
 
 # Severity order for expiry tiers - most urgent first. Shared by every place
@@ -107,6 +107,49 @@ def _safe_path(folder, filename):
     return candidate
 
 
+# old-name -> new-name hints recorded by the rename paths so stale pages
+# resolve with one stat instead of an os.listdir of the share; misses are
+# negatively cached so a tab parked on a dead name can't listdir every poll
+_RENAME_HINTS = {}
+_RESOLVE_MISSES = {}
+
+
+def _resolve_filename(folder, filename):
+    """A save can auto-rename a file (date in the name follows field 1.1)
+    while other open pages still point at the old name. Resolve stale names
+    by ship code - 'Q88 V6 <code> ...' is unique per vessel - so those pages
+    keep working instead of 500ing, which also destroyed any typed input."""
+    if os.path.exists(os.path.join(folder, filename)):
+        return filename
+    hint = _RENAME_HINTS.get((folder, filename))
+    if hint and os.path.exists(os.path.join(folder, hint)):
+        return hint
+    if _RESOLVE_MISSES.get((folder, filename), 0) > time.time():
+        return filename
+    m = FILENAME_RE.match(filename)
+    if not m:
+        return filename
+    code = m.group(2).lower()
+    candidates = []
+    for name in os.listdir(folder):
+        # legacy pre-app backups can sit in the main folder and match
+        # FILENAME_RE - never resolve onto (and then edit) a backup
+        if name.lower().endswith(".original_backup.docx"):
+            continue
+        m2 = FILENAME_RE.match(name)
+        if m2 and m2.group(2).lower() == code:
+            candidates.append(name)
+    if len(candidates) == 1:
+        if len(_RENAME_HINTS) > 512:
+            _RENAME_HINTS.clear()
+        _RENAME_HINTS[(folder, filename)] = candidates[0]
+        return candidates[0]
+    if len(_RESOLVE_MISSES) > 512:
+        _RESOLVE_MISSES.clear()
+    _RESOLVE_MISSES[(folder, filename)] = time.time() + 60
+    return filename
+
+
 def list_files(folder):
     files = []
     for name in sorted(os.listdir(folder)):
@@ -133,13 +176,26 @@ def open_document(filename, folder):
     except OSError:
         mtime = None
 
-    cached = _OPEN_CACHE.get(key)
-    if cached is not None and mtime is not None and cached.get("mtime") == mtime:
-        return cached["ext"]
+    with _cache_mutex:
+        cached = _OPEN_CACHE.get(key)
+        if cached is not None and mtime is not None and cached.get("mtime") == mtime:
+            return cached["ext"]
 
+    # parse OUTSIDE the mutex - a 0.5-1s network read must not block every
+    # other request's cache access
     doc = docx.Document(path)
     ext = parser.extract(doc)
-    _OPEN_CACHE[key] = {"path": path, "doc": doc, "ext": ext, "mtime": mtime}
+
+    with _cache_mutex:
+        cached = _OPEN_CACHE.get(key)
+        if (cached is not None and mtime is not None
+                and cached.get("mtime") is not None and cached["mtime"] >= mtime):
+            # a concurrent request cached this same version (or a just-saved
+            # newer one, e.g. field_edit's in-place mutation) while we were
+            # reading - keep theirs so a slow stale read can never overwrite
+            # a fresher cached doc
+            return cached["ext"]
+        _OPEN_CACHE[key] = {"path": path, "doc": doc, "ext": ext, "mtime": mtime}
     return ext
 
 
@@ -201,9 +257,11 @@ def _compute_issues(path, ext=None):
                     worst_state = min((s for s, _, _ in row_flagged), key=lambda s: TIER_ORDER.get(s, 9))
                     worst_id, worst_text = next((fid, text) for s, fid, text in row_flagged if s == worst_state)
                     is_date, date_iso = date_meta(worst_text)
+                    # text must be the worst cell's real value: the quick-edit
+                    # modal posts this back, and "" wiped the cell on save
                     issues.append({
                         "id": worst_id, "item_code": item_code,
-                        "label": tr["row_label"], "text": "", "state": worst_state,
+                        "label": tr["row_label"], "text": worst_text, "state": worst_state,
                         "is_date": is_date, "date_iso": date_iso,
                     })
 
@@ -239,8 +297,14 @@ def _quick_scan(path):
         mtime = os.path.getmtime(path)
     except OSError:
         return None
+    # N/A-mute toggles only touch the state sidecar, not the .docx - key on
+    # both mtimes so muting an issue updates the home-page badges too
+    try:
+        st_mtime = os.path.getmtime(statemod.state_path(path))
+    except OSError:
+        st_mtime = 0
 
-    cache_key = (path, mtime)
+    cache_key = (path, mtime, st_mtime)
     with _file_scan_mutex:
         if cache_key in _FILE_SCAN_CACHE:
             return _FILE_SCAN_CACHE[cache_key]
@@ -419,6 +483,7 @@ def import_file():
 @app.route("/rename_file/<path:filename>", methods=["POST"])
 def rename_file(filename):
     folder = get_current_folder()
+    filename = _resolve_filename(folder, filename)
     lock_key = _key(folder, filename)
     client_id = get_client_id()
     if not locks.is_owner(lock_key, client_id):
@@ -459,6 +524,11 @@ def open_file(filename):
         return redirect(url_for("index"))
 
     folder = get_current_folder()
+    resolved = _resolve_filename(folder, filename)
+    if resolved != filename:
+        return redirect(url_for("open_file", filename=resolved))
+    if not os.path.exists(_safe_path(folder, filename)):
+        return redirect(url_for("index"))
     lock_key = _key(folder, filename)
     client_id = get_client_id()
     name = get_display_name()
@@ -561,6 +631,10 @@ def open_file(filename):
 
 @app.route("/heartbeat/<path:filename>", methods=["POST"])
 def heartbeat(filename):
+    # NO _resolve_filename (same reasoning as release_lock): the active editor
+    # tab always lands on the resolved name after open_file's redirect, so it
+    # heartbeats the correct key already. Resolving here would let a parked
+    # stale-name tab keep the renamed file's lock alive indefinitely.
     lock_key = _key(get_current_folder(), filename)
     client_id = get_client_id()
     ok, holder = locks.acquire(lock_key, client_id, get_display_name())
@@ -569,13 +643,18 @@ def heartbeat(filename):
 
 @app.route("/lock_status/<path:filename>")
 def lock_status(filename):
-    lock_key = _key(get_current_folder(), filename)
+    folder = get_current_folder()
+    lock_key = _key(folder, _resolve_filename(folder, filename))
     holder = locks.status(lock_key)
     return jsonify({"locked": bool(holder), "holder": (holder or {}).get("name")})
 
 
 @app.route("/release/<path:filename>", methods=["POST"])
 def release_lock(filename):
+    # deliberately NO _resolve_filename here: a leftover tab still on the old
+    # name of a renamed file fires this beacon on unload, and resolving would
+    # release the live lock the user's active (renamed) tab is relying on -
+    # releasing the stale-name key must stay a harmless no-op
     lock_key = _key(get_current_folder(), filename)
     locks.release(lock_key, get_client_id())
     return jsonify({"ok": True})
@@ -584,6 +663,7 @@ def release_lock(filename):
 @app.route("/panel/<path:filename>")
 def file_panel(filename):
     folder = get_current_folder()
+    filename = _resolve_filename(folder, filename)
     path = _safe_path(folder, filename)
     # reuse the mtime-checked open cache - the panel is re-fetched after every
     # home-page quick edit, and re-reading the .docx from the network share
@@ -606,7 +686,10 @@ def file_panel(filename):
 @app.route("/field_edit/<path:filename>/<field_id>", methods=["POST"])
 def field_edit(filename, field_id):
     folder = get_current_folder()
+    filename = _resolve_filename(folder, filename)
     path = _safe_path(folder, filename)
+    if not os.path.exists(path):
+        return jsonify({"ok": False, "error": "file not found"}), 404
     if not locks.is_owner(_key(folder, filename), get_client_id()):
         return jsonify({"ok": False, "error": "locked"}), 409
 
@@ -618,7 +701,10 @@ def field_edit(filename, field_id):
         return jsonify({"ok": False, "error": "field not found"}), 404
 
     st = statemod.load_state(path)
-    new_text = rules.normalize_incoming_date((request.form.get("text") or "").strip())
+    # the quick-edit modal now uses a <textarea> for multiline values, so the
+    # posted text round-trips newlines faithfully and needs no squash guard
+    raw_text = rules.normalize_newlines(request.form.get("text"))
+    new_text = rules.normalize_incoming_date(raw_text.strip())
     old_text = cell.text.strip()
     if new_text != old_text:
         label = _field_labels(ext).get(field_id, "")
@@ -639,7 +725,9 @@ def field_edit(filename, field_id):
 
 @app.route("/history/<path:filename>")
 def history(filename):
-    path = os.path.join(get_current_folder(), filename)
+    folder = get_current_folder()
+    filename = _resolve_filename(folder, filename)
+    path = _safe_path(folder, filename)
     st = statemod.load_state(path)
     raw = st.get("history", [])
     entries = [dict(e, index=i) for i, e in enumerate(raw)]
@@ -656,9 +744,20 @@ def _wants_ajax():
     return request.args.get("ajax") == "1" or request.form.get("ajax") == "1"
 
 
+def _lock_conflict_response(filename):
+    """Lock lost mid-edit. The AJAX save path gets a 409 so the page (and
+    everything typed into it) stays intact - fetch silently follows a redirect
+    to a 200 page, which used to replace the user's edits with the conflict
+    banner. The redirect stays as the non-JS fallback."""
+    if request.headers.get("X-Q88-Ajax"):
+        return jsonify({"ok": False, "error": "locked"}), 409
+    return redirect(url_for("open_file", filename=filename, conflict=1))
+
+
 @app.route("/history/<path:filename>/revert/<int:index>", methods=["POST"])
 def revert_entry(filename, index):
     folder = get_current_folder()
+    filename = _resolve_filename(folder, filename)
     path = _safe_path(folder, filename)
     st = statemod.load_state(path)
     raw = st.get("history", [])
@@ -695,6 +794,7 @@ def revert_entry(filename, index):
 @app.route("/restore_original/<path:filename>", methods=["POST"])
 def restore_original(filename):
     folder = get_current_folder()
+    filename = _resolve_filename(folder, filename)
     path = _safe_path(folder, filename)
     bpath = statemod.backup_path(path)
     if os.path.exists(bpath):
@@ -724,13 +824,29 @@ def _field_labels(ext):
 
 
 def _get_or_load_cache(filename, folder):
+    """Cache entry for a mutating route. Always revalidates through
+    open_document (a blind cache hit here once let a stale parse overwrite a
+    file that had changed on disk); when the mtime still matches this costs a
+    single getmtime call, no parse."""
     key = _key(folder, filename)
+    open_document(filename, folder)
     with _cache_mutex:
         cache = _OPEN_CACHE.get(key)
-        if not cache:
-            open_document(filename, folder)
-            cache = _OPEN_CACHE[key]
+    if cache is not None:
         return cache
+    # evicted in the race window between install and read (a concurrent
+    # rename/revert popped the key). Parse a fresh entry and adopt whatever
+    # is in the cache if another thread reinstalled one meanwhile - .get with
+    # a default never KeyErrors.
+    path = _safe_path(folder, filename)
+    doc = docx.Document(path)
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = None
+    entry = {"path": path, "doc": doc, "ext": parser.extract(doc), "mtime": mtime}
+    with _cache_mutex:
+        return _OPEN_CACHE.setdefault(key, entry)
 
 
 def _apply_form_edits(ext, path, form, by):
@@ -746,7 +862,7 @@ def _apply_form_edits(ext, path, form, by):
         if new_text is None:
             continue
         old_text = cell.text.strip()
-        new_text = rules.normalize_incoming_date(new_text.strip())
+        new_text = rules.normalize_incoming_date(rules.normalize_newlines(new_text).strip())
         if new_text != old_text:
             if not changed:
                 statemod.ensure_backup(path)
@@ -783,9 +899,8 @@ def _rename_for_date(path, new_date_text, by):
     statemod.save_state(path, st)
 
     os.rename(path, new_path)
-    old_state = statemod.state_path(path)
-    if os.path.exists(old_state):
-        os.rename(old_state, statemod.state_path(new_path))
+    statemod.move_sidecars(path, new_path)
+    _RENAME_HINTS[(dirname, base)] = new_base
     return new_path
 
 
@@ -803,12 +918,8 @@ def _manual_rename(path, new_name, by):
     statemod.save_state(path, st)
 
     os.rename(path, new_path)
-    old_state = statemod.state_path(path)
-    if os.path.exists(old_state):
-        os.rename(old_state, statemod.state_path(new_path))
-    old_backup = statemod.backup_path(path)
-    if os.path.exists(old_backup):
-        os.rename(old_backup, statemod.backup_path(new_path))
+    statemod.move_sidecars(path, new_path)
+    _RENAME_HINTS[(dirname, base)] = new_name
     return new_path, True
 
 
@@ -849,10 +960,11 @@ def _maybe_rename_by_date_field(ext, path, by):
 @app.route("/save/<path:filename>", methods=["POST"])
 def save_file(filename):
     folder = get_current_folder()
+    filename = _resolve_filename(folder, filename)
     lock_key = _key(folder, filename)
     client_id = get_client_id()
     if not locks.is_owner(lock_key, client_id):
-        return redirect(url_for("open_file", filename=filename, conflict=1))
+        return _lock_conflict_response(filename)
 
     cache = _get_or_load_cache(filename, folder)
     doc, ext, path = cache["doc"], cache["ext"], cache["path"]
@@ -870,6 +982,9 @@ def save_file(filename):
     if new_path != path:
         new_filename = os.path.basename(new_path)
         _OPEN_CACHE.pop(lock_key, None)
+        with _file_scan_mutex:
+            for stale_key in [k for k in _FILE_SCAN_CACHE if k[0] == path]:
+                del _FILE_SCAN_CACHE[stale_key]
 
     locks.release(lock_key, client_id)
 
@@ -881,10 +996,11 @@ def save_as(filename):
     """Save the currently-edited (not-yet-saved) form content into a brand
     new .docx file, leaving the original file on disk untouched."""
     folder = get_current_folder()
+    filename = _resolve_filename(folder, filename)
     lock_key = _key(folder, filename)
     client_id = get_client_id()
     if not locks.is_owner(lock_key, client_id):
-        return redirect(url_for("open_file", filename=filename, conflict=1))
+        return _lock_conflict_response(filename)
 
     new_name = os.path.basename((request.form.get("new_filename") or "").strip())
     if not new_name:
@@ -909,10 +1025,11 @@ def save_as(filename):
 @app.route("/add_row/<path:filename>/<table_key>", methods=["POST"])
 def add_row(filename, table_key):
     folder = get_current_folder()
+    filename = _resolve_filename(folder, filename)
     lock_key = _key(folder, filename)
     client_id = get_client_id()
     if not locks.is_owner(lock_key, client_id):
-        return redirect(url_for("open_file", filename=filename, conflict=1))
+        return _lock_conflict_response(filename)
 
     cache = _get_or_load_cache(filename, folder)
     doc, ext, path = cache["doc"], cache["ext"], cache["path"]
@@ -938,10 +1055,11 @@ def add_row(filename, table_key):
 @app.route("/delete_row/<path:filename>/<table_key>/<int:row_index>", methods=["POST"])
 def delete_row(filename, table_key, row_index):
     folder = get_current_folder()
+    filename = _resolve_filename(folder, filename)
     lock_key = _key(folder, filename)
     client_id = get_client_id()
     if not locks.is_owner(lock_key, client_id):
-        return redirect(url_for("open_file", filename=filename, conflict=1))
+        return _lock_conflict_response(filename)
 
     cache = _get_or_load_cache(filename, folder)
     doc, ext, path = cache["doc"], cache["ext"], cache["path"]

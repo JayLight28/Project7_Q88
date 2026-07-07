@@ -45,6 +45,13 @@ def format_date(d):
 ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
+def normalize_newlines(text):
+    """Form submissions arrive with CRLF line endings; docx cell text uses
+    bare \\n. Every write path must normalize identically or multiline cells
+    stop round-tripping (phantom diffs, squashed lines)."""
+    return (text or "").replace("\r\n", "\n").replace("\r", "\n")
+
+
 def normalize_incoming_date(raw):
     """Convert a native <input type="date"> submission (always yyyy-mm-dd)
     into dd-mmm-yyyy. Anything that isn't exactly that ISO shape, or isn't
@@ -86,7 +93,10 @@ def try_parse_date(text):
     if not DATE_HINT_RE.search(text):
         return None
     try:
-        dt = dateparser.parse(text, fuzzy=True, default=datetime.datetime(2000, 1, 1))
+        # dayfirst: ambiguous numeric dates in these forms are day-first
+        # ("01.10.2021" = 01 Oct) - the default US order silently flipped
+        # them to "10-Jan-2021" when a save normalized the format
+        dt = dateparser.parse(text, fuzzy=True, dayfirst=True, default=datetime.datetime(2000, 1, 1))
         return dt.date()
     except (ValueError, OverflowError):
         return None

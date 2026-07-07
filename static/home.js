@@ -144,7 +144,7 @@ document.addEventListener("DOMContentLoaded", function () {
   modal.innerHTML =
     '<div class="modal-box">' +
     '  <h3 class="modal-title"></h3>' +
-    '  <label class="modal-field">Value<input type="text" class="modal-text"></label>' +
+    '  <label class="modal-field">Value<input type="text" class="modal-text"><textarea class="modal-textarea" rows="4"></textarea></label>' +
     '  <label class="checkbox-line"><input type="checkbox" class="modal-na"> N/A (mute this)</label>' +
     '  <div class="modal-actions">' +
     '    <button type="button" class="small-btn modal-cancel">Cancel</button>' +
@@ -154,18 +154,30 @@ document.addEventListener("DOMContentLoaded", function () {
   document.body.appendChild(modal);
   var modalTitle = modal.querySelector(".modal-title");
   var modalText = modal.querySelector(".modal-text");
+  var modalTextarea = modal.querySelector(".modal-textarea");
   var modalNa = modal.querySelector(".modal-na");
   var modalFieldId = null;
+  var modalMultiline = false;
 
   function openIssueModal(row) {
     modalFieldId = row.getAttribute("data-field-id");
     modalTitle.textContent = row.getAttribute("data-label");
     var isDate = row.getAttribute("data-is-date") === "true";
-    modalText.type = isDate ? "date" : "text";
-    modalText.value = isDate ? (row.getAttribute("data-date-iso") || "") : (row.getAttribute("data-text") || "");
+    var text = row.getAttribute("data-text") || "";
+    // a single-line <input> silently strips \n from a multiline value, so an
+    // edit would write it back flattened - switch to a textarea for those
+    modalMultiline = !isDate && text.indexOf("\n") !== -1;
+    modalText.style.display = modalMultiline ? "none" : "";
+    modalTextarea.style.display = modalMultiline ? "" : "none";
+    if (modalMultiline) {
+      modalTextarea.value = text;
+    } else {
+      modalText.type = isDate ? "date" : "text";
+      modalText.value = isDate ? (row.getAttribute("data-date-iso") || "") : text;
+    }
     modalNa.checked = false;
     modal.classList.add("open");
-    modalText.focus();
+    (modalMultiline ? modalTextarea : modalText).focus();
   }
   function closeModal() {
     modal.classList.remove("open");
@@ -179,7 +191,7 @@ document.addEventListener("DOMContentLoaded", function () {
     var filename = detailPane.dataset.filename;
     if (!filename || !modalFieldId) return;
     var body = new FormData();
-    body.append("text", modalText.value);
+    body.append("text", modalMultiline ? modalTextarea.value : modalText.value);
     body.append("na", modalNa.checked ? "on" : "off");
     fetch("/field_edit/" + encodeURIComponent(filename) + "/" + encodeURIComponent(modalFieldId), {
       method: "POST", body: body,
@@ -189,6 +201,8 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!data.ok) {
           if (data.error === "locked") {
             alert("Someone else is currently editing this file - try again once they're done.");
+          } else {
+            alert("Save failed: " + (data.error || "unknown error") + " - please refresh the page and try again.");
           }
           return;
         }

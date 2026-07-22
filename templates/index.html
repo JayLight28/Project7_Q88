@@ -27,7 +27,15 @@
           {% if tier_totals.DUE_90 %}<span class="severity-chip state-DUE_90">{{ tier_totals.DUE_90 }} file(s) due &lt;=90d</span>{% endif %}
         </div>
       {% endif %}
-      <input type="text" id="file-search" class="file-search" placeholder="Filter by filename...">
+      <input type="text" id="file-search" class="file-search" placeholder="Filter by filename or vessel name...">
+      <div class="file-filter">
+        <button type="button" data-filter="" class="active">All</button>
+        <button type="button" data-filter="EXPIRED" class="state-EXPIRED">Expired</button>
+        <button type="button" data-filter="DUE_30" class="state-DUE_30">&lt;=30d</button>
+        <button type="button" data-filter="DUE_60" class="state-DUE_60">&lt;=60d</button>
+        <button type="button" data-filter="DUE_90" class="state-DUE_90">&lt;=90d</button>
+        <button type="button" data-filter="MISSING" class="state-MISSING">Empty</button>
+      </div>
       <div class="file-sort">
         <button type="button" data-sort="name" class="active">Name</button>
         <button type="button" data-sort="date">Date modified</button>
@@ -38,6 +46,8 @@
           <li class="{{ 'file-card' if f.supported else 'file-card disabled' }}"
               data-mtime="{{ f.mtime }}"
               {% if card_severity %}data-severity="{{ card_severity }}"{% endif %}
+              {% if f.missing_count %}data-missing="1"{% endif %}
+              {% if f.vessel_name %}data-vessel="{{ f.vessel_name }}"{% endif %}
               {% if f.supported %}data-filename="{{ f.name }}"{% endif %}>
             <div class="file-body">
               {% if f.supported %}

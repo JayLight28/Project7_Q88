@@ -26,13 +26,18 @@ def status(filename):
 
 
 def acquire(filename, client_id, name):
-    """Try to take/refresh the lock for client_id. Returns (ok, holder_if_blocked)."""
+    """Try to take/refresh the lock for client_id. Returns (ok, holder_if_blocked,
+    resumed). resumed is True when this was NOT a plain refresh of the caller's
+    own live lock (no entry, an expired one, or a takeover from an expired other
+    holder) - the heartbeat surfaces that to the user, since someone else may
+    have edited the file during the gap."""
     with _mutex:
         entry = _locks.get(filename)
         if entry and not _expired(entry) and entry["client_id"] != client_id:
-            return False, dict(entry)
+            return False, dict(entry), False
+        resumed = entry is None or _expired(entry) or entry["client_id"] != client_id
         _locks[filename] = {"client_id": client_id, "name": name, "since": time.time()}
-        return True, None
+        return True, None, resumed
 
 
 def release(filename, client_id):

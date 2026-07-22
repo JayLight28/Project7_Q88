@@ -101,21 +101,41 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   });
 
-  // --- search + sort ---
+  // --- search + severity filter + sort ---
   var searchInput = document.getElementById("file-search");
   var fileList = document.getElementById("file-list");
   var sortButtons = document.querySelectorAll(".file-sort button");
+  var filterButtons = document.querySelectorAll(".file-filter button");
+  var activeSeverity = "";
 
   function applyFilter() {
-    var q = (searchInput.value || "").toLowerCase();
+    var q = (searchInput && searchInput.value ? searchInput.value : "").toLowerCase();
     cards.forEach(function (card) {
       var name = (card.getAttribute("data-filename") || card.textContent || "").toLowerCase();
-      card.style.display = name.indexOf(q) === -1 ? "none" : "";
+      var vessel = (card.getAttribute("data-vessel") || "").toLowerCase();
+      var textHit = name.indexOf(q) !== -1 || vessel.indexOf(q) !== -1;
+      var severityHit = true;
+      if (activeSeverity) {
+        // MISSING can coexist with a worse expiry tier on the same file, so
+        // the Empty chip matches data-missing, not just the worst-state attr
+        severityHit = activeSeverity === "MISSING"
+          ? card.getAttribute("data-missing") === "1"
+          : card.getAttribute("data-severity") === activeSeverity;
+      }
+      card.style.display = textHit && severityHit ? "" : "none";
     });
   }
   if (searchInput) {
     searchInput.addEventListener("input", applyFilter);
   }
+  filterButtons.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      filterButtons.forEach(function (b) { b.classList.remove("active"); });
+      btn.classList.add("active");
+      activeSeverity = btn.getAttribute("data-filter") || "";
+      applyFilter();
+    });
+  });
 
   function applySort(key) {
     if (!fileList) return;

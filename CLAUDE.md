@@ -1,4 +1,4 @@
-# Q88 Check — Claude Agent Reference (v1.5.2)
+# Q88 Check — Claude Agent Reference (v1.6.0)
 
 > **Primary reference for Claude. Reading this alone covers 80% of tasks.**
 
@@ -55,20 +55,22 @@
 
 | File | Purpose | Entry Point |
 |------|---------|-------------|
-| `app.py` (~1162L) | Flask routes, locks/cookies wiring, save/rename logic, stale-name resolution | routes at top, see table below |
+| `app.py` (~1208L) | Flask routes, locks/cookies wiring, save/rename logic, stale-name resolution, Obsolete/ retention | routes at top, see table below |
 | `q88/parser.py` (~294L) | Reads `.docx` tables/cells into structured field data | top |
 | `q88/rules.py` (~138L) | Issue/warning rules (expiry tiers, missing fields), date formatting (`format_date`, `normalize_incoming_date`, `normalize_newlines`, `try_parse_pure_date`; `try_parse_date` is `dayfirst=True`) | top |
 | `q88/state.py` (~65L) | Edit-history cache + revert; `move_sidecars` for renames (dir creation only in `save_state`/`ensure_backup`, never on reads) | top |
 | `q88/style.py` (~148L) | Copies formatting from a reference `.docx` to targets | top |
-| `q88/locks.py` (~50L) | In-memory per-file edit lock (180s timeout) | top |
+| `q88/locks.py` (~55L) | In-memory per-file edit lock (180s timeout); `acquire` returns `(ok, holder, resumed)` — `resumed` = not a plain refresh of the caller's live lock | top |
 | `q88/config.py` (~53L) | `app_config.json` read/write — watch folder + named fleet folder presets | top |
-| `static/app.js` (~261L) | Document editor page behavior; AJAX save sends `X-Q88-Ajax` so a lost-lock save gets a 409 (keeps typed input) instead of following a redirect | top |
-| `static/home.js` (~428L) | File list / folder picker page + first-run tutorial tour (`q88_tutorial_done` localStorage flag, `#tour-btn` replay); quick-edit modal uses a `<textarea>` for multiline values | top |
+| `static/app.js` (~421L) | Document editor page behavior; AJAX save sends `X-Q88-Ajax` so a lost-lock save gets a 409 (keeps typed input) instead of following a redirect; plain Save shows a diff-confirm modal (changed fields old→new) first; heartbeat clears its previous interval on re-init (`window._q88HeartbeatTimer`) and shows a dismissible banner on lost lock / lapsed-and-resumed lock | top |
+| `static/home.js` (~448L) | File list / folder picker page + first-run tutorial tour (`q88_tutorial_done` localStorage flag, `#tour-btn` replay); quick-edit modal uses a `<textarea>` for multiline values; search matches filename + vessel name, combined with severity chip filter (`data-severity`/`data-missing`) | top |
 | `templates/document.html` | Editor UI | — |
 | `templates/index.html` | Home/file-list UI | — |
 | `templates/history.html` | Per-file revert history UI | — |
 | `templates/_panel.html` | Shared side-panel partial | — |
 | `tests/test_rules.py` (~95L) | Unit tests for `q88/rules.py` pure functions (`python -m pytest tests/`, needs `requirements-dev.txt`) | top |
+| `tests/test_locks.py` (~80L) | Lock acquire/refresh/expire/resume/release semantics | top |
+| `tests/test_app.py` (~180L) | Route tests: Flask test client + tmp watch folder via `q88_folder` cookie, generated 3-column docx fixture (field ids f1..f4); covers open/save/date-rename/409 conflict/field_edit/heartbeat-resumed/prune | top |
 
 ### app.py — Routes
 | Route | Line | Purpose |
@@ -87,11 +89,11 @@
 | `/history/<filename>` | 727 | Edit history view (uses `_safe_path` for containment) |
 | `/history/<filename>/revert/<index>` | 758 | Revert to a prior value |
 | `/restore_original/<filename>` | 795 | Restore from original reference form |
-| `/save/<filename>` | 961 | Write edits to `.docx` (archives pre-edit copy to `Obsolete/` first), may rename by date; lost lock -> `_lock_conflict_response` |
-| `/save_as/<filename>` | 995 | Copy current in-browser edits to a new `.docx`, original untouched |
-| `/add_row/<filename>/<table_key>` | 1026 | Append a table row |
-| `/delete_row/<filename>/<table_key>/<row_index>` | 1056 | Remove a table row |
-| `/apply_style_all` | 1096 | Copy style from reference file to all docs |
+| `/save/<filename>` | 1007 | Write edits to `.docx` (archives pre-edit copy to `Obsolete/` first, then prunes >12-month archives), may rename by date; lost lock -> `_lock_conflict_response` |
+| `/save_as/<filename>` | 1041 | Copy current in-browser edits to a new `.docx`, original untouched |
+| `/add_row/<filename>/<table_key>` | 1072 | Append a table row |
+| `/delete_row/<filename>/<table_key>/<row_index>` | 1102 | Remove a table row |
+| `/apply_style_all` | 1142 | Copy style from reference file to all docs |
 
 ### app.py — Key Helpers
 | Function | Line | Purpose |
@@ -109,9 +111,10 @@
 | `_get_or_load_cache` | 826 | Revalidates via `open_document`; returns the cache entry with an eviction-race fallback (no bare `[key]`) |
 | `_apply_form_edits` | 852 | Bulk-apply submitted form fields; normalizes CRLF (`rules.normalize_newlines`) + date inputs (`rules.normalize_incoming_date`) |
 | `_rename_for_date` | 884 | Renames on disk + `statemod.move_sidecars` + records a `_RENAME_HINTS` entry |
-| `_archive_previous_version` | 926 | Copies the pre-edit file into `Obsolete/` before `/save` overwrites it |
-| `_maybe_rename_by_date_field` | 942 | Auto-rename `Q88 V6 <code> <date>.docx` when date field changes |
-| `_apply_style_to_file` | 1081 | Per-file style copy used by `/apply_style_all` |
+| `_prune_obsolete` | 932 | 12-month retention for `Obsolete/` (`OBSOLETE_RETENTION_DAYS=365`); age = archive mtime (copy2 preserves it = the version's last-save time); always keeps the newest archive per ship code; stamped non-`FILENAME_RE` names group by stripped base name |
+| `_archive_previous_version` | 971 | Copies the pre-edit file into `Obsolete/` before `/save` overwrites it, then runs `_prune_obsolete` |
+| `_maybe_rename_by_date_field` | 988 | Auto-rename `Q88 V6 <code> <date>.docx` when date field changes |
+| `_apply_style_to_file` | 1127 | Per-file style copy used by `/apply_style_all` |
 
 `open_document` (167) reuses the cached parse instead of re-reading the file from disk when its stored `mtime` still matches — add_row/delete_row, `/field_edit` and `/save` all refresh that mtime after writing (the in-memory doc they just saved IS the on-disk version), and `/panel` reads through this cache too, so neither the post-save redirect nor a home-page quick-edit's panel refresh forces a full network read+parse. The docx parse itself runs OUTSIDE `_cache_mutex` (a 0.5-1s network read must not serialize every other request); the mutex only guards the dict, and a slower stale read can't clobber a fresher cached version (mtime guard).
 

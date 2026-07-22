@@ -109,11 +109,103 @@ function q88InitPage() {
       saveStatus.classList.toggle("error", !!isError);
     }
 
-    form.addEventListener("submit", function (e) {
-      e.preventDefault();
-      var submitter = e.submitter;
-      var isSaveAs = !!(submitter && submitter.hasAttribute("data-save-as"));
-      var url = (submitter && submitter.getAttribute("formaction")) || form.action;
+    // --- save confirmation: list what actually changed before writing ---
+    function fieldLabel(el) {
+      var tr = el.closest("tr");
+      if (!tr) return el.name;
+      var lab = tr.querySelector("td.label");
+      if (lab) {
+        var code = tr.querySelector("td.item-code");
+        return ((code ? code.textContent.trim() + " " : "") + lab.textContent.trim()).replace(/\s+/g, " ");
+      }
+      var wrap = el.closest(".row-table-wrap");
+      var title = wrap ? wrap.querySelector(".sub-table-title") : null;
+      var first = tr.cells && tr.cells.length ? tr.cells[0].textContent.trim() : "";
+      var t = title ? title.textContent.trim().replace(/\s+/g, " ") : "";
+      return (t && first ? t + " - " + first : t || first) || el.name;
+    }
+
+    function collectChanges() {
+      var changes = [];
+      form.querySelectorAll('input[name^="f_"], textarea[name^="f_"]').forEach(function (el) {
+        if (el.value !== el.defaultValue) {
+          changes.push({ label: fieldLabel(el), oldVal: el.defaultValue, newVal: el.value });
+        }
+      });
+      form.querySelectorAll('input[type="checkbox"][name^="na_"]').forEach(function (el) {
+        if (el.checked !== el.defaultChecked) {
+          changes.push({
+            label: fieldLabel(el),
+            oldVal: el.defaultChecked ? "N/A checked" : "N/A unchecked",
+            newVal: el.checked ? "N/A checked" : "N/A unchecked",
+          });
+        }
+      });
+      return changes;
+    }
+
+    var diffModal = document.createElement("div");
+    diffModal.className = "modal-overlay";
+    diffModal.innerHTML =
+      '<div class="modal-box diff-box">' +
+      '  <h3 class="modal-title"></h3>' +
+      '  <div class="diff-list"></div>' +
+      '  <div class="modal-actions">' +
+      '    <button type="button" class="small-btn diff-cancel">Cancel</button>' +
+      '    <button type="button" class="small-btn primary diff-confirm">Save</button>' +
+      '  </div>' +
+      '</div>';
+    document.body.appendChild(diffModal);
+    var diffOnConfirm = null;
+    function closeDiffModal() {
+      diffModal.classList.remove("open");
+      diffOnConfirm = null;
+    }
+    diffModal.addEventListener("click", function (e) {
+      if (e.target === diffModal) closeDiffModal();
+    });
+    diffModal.querySelector(".diff-cancel").addEventListener("click", closeDiffModal);
+    diffModal.querySelector(".diff-confirm").addEventListener("click", function () {
+      var fn = diffOnConfirm;
+      closeDiffModal();
+      if (fn) fn();
+    });
+
+    function openDiffModal(changes, onConfirm) {
+      diffModal.querySelector(".modal-title").textContent =
+        "Save " + changes.length + " change" + (changes.length === 1 ? "" : "s") + "?";
+      var list = diffModal.querySelector(".diff-list");
+      list.innerHTML = "";
+      changes.forEach(function (c) {
+        // textContent only - cell values are user data, never render as HTML
+        var row = document.createElement("div");
+        row.className = "diff-row";
+        var label = document.createElement("div");
+        label.className = "diff-label";
+        label.textContent = c.label;
+        var vals = document.createElement("div");
+        vals.className = "diff-values";
+        var oldSpan = document.createElement("span");
+        oldSpan.className = "diff-old";
+        oldSpan.textContent = c.oldVal === "" ? "(empty)" : c.oldVal;
+        var arrow = document.createElement("span");
+        arrow.className = "diff-arrow";
+        arrow.innerHTML = "&#8594;";
+        var newSpan = document.createElement("span");
+        newSpan.className = "diff-new";
+        newSpan.textContent = c.newVal === "" ? "(empty)" : c.newVal;
+        vals.appendChild(oldSpan);
+        vals.appendChild(arrow);
+        vals.appendChild(newSpan);
+        row.appendChild(label);
+        row.appendChild(vals);
+        list.appendChild(row);
+      });
+      diffOnConfirm = onConfirm;
+      diffModal.classList.add("open");
+    }
+
+    function performSave(url, isSaveAs) {
       var formData = new FormData(form);
       sessionStorage.setItem(scrollKey, window.scrollY);
       setSaveStatus("Saving...", false);
@@ -154,6 +246,25 @@ function q88InitPage() {
             : "Save failed (" + (err && err.message ? err.message : "network error") + ") - your edits are still on this page. Please try Save again.";
           setSaveStatus(msg, true);
         });
+    }
+
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var submitter = e.submitter;
+      var isSaveAs = !!(submitter && submitter.hasAttribute("data-save-as"));
+      var url = (submitter && submitter.getAttribute("formaction")) || form.action;
+      // only the plain Save button gets the confirmation step - Save As makes
+      // a copy (original untouched) and the add/delete-row buttons are their
+      // own immediate actions
+      var isPlainSave = !isSaveAs && !(submitter && submitter.hasAttribute("formaction"));
+      if (isPlainSave) {
+        var changes = collectChanges();
+        if (changes.length) {
+          openDiffModal(changes, function () { performSave(url, false); });
+          return;
+        }
+      }
+      performSave(url, isSaveAs);
     });
   }
 
@@ -228,16 +339,65 @@ function q88InitPage() {
   if (!filename) return;
 
   if (!readOnly) {
-    // no clearInterval by design: the heartbeat must run for the whole
-    // lifetime of the editor page to keep the server-side edit lock alive
-    setInterval(function () {
+    var lockNoticeText = "";
+    function showLockNotice(text, isConflict) {
+      if (lockNoticeText === text) return; // don't re-add every heartbeat
+      lockNoticeText = text;
+      var old = document.getElementById("lock-notice");
+      if (old) old.remove();
+      var banner = document.createElement("div");
+      banner.id = "lock-notice";
+      banner.className = "lock-banner" + (isConflict ? " conflict" : "");
+      var icon = document.createElement("span");
+      icon.className = "banner-icon";
+      icon.innerHTML = isConflict ? "&#9888;" : "&#128275;"; // static icon, matches the template entities
+      var msg = document.createElement("span");
+      msg.textContent = " " + text + " ";
+      var dismiss = document.createElement("button");
+      dismiss.type = "button";
+      dismiss.textContent = "Dismiss";
+      dismiss.addEventListener("click", function () { banner.remove(); });
+      banner.appendChild(icon);
+      banner.appendChild(msg);
+      banner.appendChild(dismiss);
+      var main = document.querySelector(".main-pane");
+      if (main) main.insertBefore(banner, main.firstChild);
+    }
+
+    // the heartbeat runs for the whole lifetime of the editor page to keep
+    // the server-side edit lock alive - but q88InitPage re-runs after every
+    // AJAX save (body replacement), so the previous interval must be cleared
+    // or a stale one keeps heartbeating the OLD filename after a date-rename
+    // and falsely triggers the "lock lapsed" notice
+    if (window._q88HeartbeatTimer) clearInterval(window._q88HeartbeatTimer);
+    window._q88HeartbeatTimer = setInterval(function () {
       fetch("/heartbeat/" + encodeURIComponent(filename), { method: "POST" })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (!data.ok) {
+            showLockNotice(
+              (data.holder || "Someone else") + " has taken over editing this file - your next save will be rejected. Copy anything important, then refresh.",
+              true
+            );
+          } else if (data.resumed) {
+            showLockNotice(
+              "Your edit lock lapsed (no contact with the server for over 3 minutes) and was just re-acquired. If someone else edited this file in the meantime, refresh before saving.",
+              false
+            );
+          }
+        })
         .catch(function (err) { console.error("heartbeat failed", err); });
     }, 60000);
     window.addEventListener("beforeunload", function () {
       navigator.sendBeacon("/release/" + encodeURIComponent(filename));
     });
   } else {
+    // page re-rendered read-only: stop any heartbeat left over from a
+    // previous editable render so it can't keep touching the lock
+    if (window._q88HeartbeatTimer) {
+      clearInterval(window._q88HeartbeatTimer);
+      window._q88HeartbeatTimer = null;
+    }
     var refreshBtn = document.getElementById("refresh-lock-btn");
     if (refreshBtn) {
       refreshBtn.addEventListener("click", function () {

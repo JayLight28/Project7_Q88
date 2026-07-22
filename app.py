@@ -16,7 +16,7 @@ from flask import Flask, render_template, request, redirect, url_for, jsonify, g
 from q88 import parser, rules, state as statemod, style as stylemod, locks, config as configmod
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = "1.5.2"
+APP_VERSION = "1.6.0"
 REFERENCE_HINT = "original form"
 
 # Severity order for expiry tiers - most urgent first. Shared by every place
@@ -532,7 +532,7 @@ def open_file(filename):
     lock_key = _key(folder, filename)
     client_id = get_client_id()
     name = get_display_name()
-    got_lock, holder = locks.acquire(lock_key, client_id, name)
+    got_lock, holder, _resumed = locks.acquire(lock_key, client_id, name)
     read_only = not got_lock
 
     ext = open_document(filename, folder)
@@ -637,8 +637,8 @@ def heartbeat(filename):
     # stale-name tab keep the renamed file's lock alive indefinitely.
     lock_key = _key(get_current_folder(), filename)
     client_id = get_client_id()
-    ok, holder = locks.acquire(lock_key, client_id, get_display_name())
-    return jsonify({"ok": ok, "holder": (holder or {}).get("name")})
+    ok, holder, resumed = locks.acquire(lock_key, client_id, get_display_name())
+    return jsonify({"ok": ok, "holder": (holder or {}).get("name"), "resumed": resumed})
 
 
 @app.route("/lock_status/<path:filename>")
@@ -923,6 +923,51 @@ def _manual_rename(path, new_name, by):
     return new_path, True
 
 
+OBSOLETE_RETENTION_DAYS = 365
+
+# "<base> (YYYYMMDD_HHMMSS).docx" collision stamps added by _archive_previous_version
+_ARCHIVE_STAMP_RE = re.compile(r" \(\d{8}_\d{6}\)$")
+
+
+def _prune_obsolete(obsolete_dir):
+    """Keep the Obsolete/ archive bounded: versions older than 12 months are
+    deleted. Age is the archive's mtime - copy2 preserves it, so it equals the
+    moment that version was last saved, i.e. when the version came into being.
+    The newest archive per ship code is always kept regardless of age, so a
+    rarely-edited vessel never loses its only prior version."""
+    cutoff = time.time() - OBSOLETE_RETENTION_DAYS * 86400
+    try:
+        names = os.listdir(obsolete_dir)
+    except OSError:
+        return
+    groups = {}
+    for name in names:
+        if not name.lower().endswith(".docx"):
+            continue
+        full = os.path.join(obsolete_dir, name)
+        try:
+            mtime = os.path.getmtime(full)
+        except OSError:
+            continue
+        m = FILENAME_RE.match(name)
+        if m:
+            code = m.group(2).lower()
+        else:
+            # non-standard filename: strip the collision stamp so all archives
+            # of the same file share one group (else stamped copies would each
+            # be a singleton "newest" and never get pruned)
+            code = _ARCHIVE_STAMP_RE.sub("", os.path.splitext(name)[0]).lower()
+        groups.setdefault(code, []).append((mtime, full))
+    for entries in groups.values():
+        entries.sort()
+        for mtime, full in entries[:-1]:
+            if mtime < cutoff:
+                try:
+                    os.remove(full)
+                except OSError:
+                    pass
+
+
 def _archive_previous_version(path):
     """Copy the pre-edit file into an Obsolete/ subfolder next to it before a
     save overwrites it in place, so prior revisions aren't lost."""
@@ -937,6 +982,7 @@ def _archive_previous_version(path):
         name, ext = os.path.splitext(base)
         dest = os.path.join(obsolete_dir, f"{name} ({stamp}){ext}")
     shutil.copy2(path, dest)
+    _prune_obsolete(obsolete_dir)
 
 
 def _maybe_rename_by_date_field(ext, path, by):
